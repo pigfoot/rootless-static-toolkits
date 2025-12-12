@@ -92,3 +92,37 @@ scratch-*.*
 *-debug.ts
 *-debug.js
 *-debug.py
+
+# === Project-specific: Static Container Tools Build ===
+
+# Build dependencies (cloned sources)
+build/mimalloc/build/
+build/mimalloc/.git/
+build/*-*/
+
+# Compiled objects and libraries
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.exe
+
+# Go build artifacts
+*.test
+vendor/
+go-build/
+
+# Downloaded source archives
+*.tar.gz
+*.tar.xz
+*.tar.zst
+*.zip
+
+# Release artifacts (built locally)
+checksums.txt
+*.sig
+
+# Zig cache
+zig-cache/
+zig-out/

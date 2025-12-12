@@ -28,10 +28,10 @@ Dockerfile.*             # Fallback build containers
 
 **Purpose**: Project initialization and basic structure
 
-- [ ] T001 Create project directory structure: scripts/, build/, build/mimalloc/, build/patches/
-- [ ] T002 Create Makefile with build/test/clean targets at ./Makefile
-- [ ] T003 [P] Create .gitignore with build artifacts, temporary files at ./.gitignore
-- [ ] T004 [P] Create README.md with project overview, usage instructions at ./README.md
+- [X] T001 Create project directory structure: scripts/, build/, build/mimalloc/, build/patches/
+- [X] T002 Create Makefile with build/test/clean targets at ./Makefile
+- [X] T003 [P] Create .gitignore with build artifacts, temporary files at ./.gitignore
+- [X] T004 [P] Create README.md with project overview, usage instructions at ./README.md
 
 ---
 
@@ -43,23 +43,23 @@ Dockerfile.*             # Fallback build containers
 
 ### Build Dependencies
 
-- [ ] T005 Clone and setup mimalloc source in build/mimalloc/
-- [ ] T006 Create script to compile mimalloc with Zig for musl targets at scripts/build-mimalloc.sh
-- [ ] T007 [P] Create default config files: build/etc/containers/policy.json
-- [ ] T008 [P] Create default config files: build/etc/containers/registries.conf
+- [X] T005 Clone and setup mimalloc source in build/mimalloc/
+- [X] T006 Create script to compile mimalloc with Zig for musl targets at scripts/build-mimalloc.sh
+- [X] T007 [P] Create default config files: build/etc/containers/policy.json
+- [X] T008 [P] Create default config files: build/etc/containers/registries.conf
 
 ### Core Build Scripts
 
-- [ ] T009 Create main build script with Zig + Go + CGO setup at scripts/build-tool.sh
-- [ ] T010 Create packaging script with bin/lib/etc structure at scripts/package.sh
-- [ ] T011 [P] Create version check script comparing upstream vs local releases at scripts/check-version.sh
-- [ ] T012 [P] Create signing script with cosign keyless signing at scripts/sign-release.sh
+- [X] T009 Create main build script with Zig + Go + CGO setup at scripts/build-tool.sh
+- [X] T010 Create packaging script with bin/lib/etc structure at scripts/package.sh
+- [X] T011 [P] Create version check script comparing upstream vs local releases at scripts/check-version.sh
+- [X] T012 [P] Create signing script with cosign keyless signing at scripts/sign-release.sh
 
 ### Fallback Infrastructure
 
-- [ ] T013 [P] Create Dockerfile.podman with Alpine musl build environment
-- [ ] T014 [P] Create Dockerfile.buildah with Alpine musl build environment
-- [ ] T015 [P] Create Dockerfile.skopeo with Alpine musl build environment
+- [X] T013 [P] Create Dockerfile.podman with Alpine musl build environment
+- [X] T014 [P] Create Dockerfile.buildah with Alpine musl build environment
+- [X] T015 [P] Create Dockerfile.skopeo with Alpine musl build environment
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
@@ -73,30 +73,30 @@ Dockerfile.*             # Fallback build containers
 
 ### Build Workflows for US1
 
-- [ ] T016 [US1] Create GitHub Actions workflow for podman build at .github/workflows/build-podman.yml
-- [ ] T017 [P] [US1] Create GitHub Actions workflow for buildah build at .github/workflows/build-buildah.yml
-- [ ] T018 [P] [US1] Create GitHub Actions workflow for skopeo build at .github/workflows/build-skopeo.yml
+- [X] T016 [US1] Create GitHub Actions workflow for podman build at .github/workflows/build-podman.yml
+- [X] T017 [P] [US1] Create GitHub Actions workflow for buildah build at .github/workflows/build-buildah.yml
+- [X] T018 [P] [US1] Create GitHub Actions workflow for skopeo build at .github/workflows/build-skopeo.yml
 
 ### Podman-Specific Tasks
 
-- [ ] T019 [US1] Add podman full variant build logic (with runtime components) to scripts/build-tool.sh
-- [ ] T020 [US1] Add podman minimal variant build logic to scripts/build-tool.sh
-- [ ] T021 [US1] Add runtime component builds (crun, conmon, fuse-overlayfs) to scripts/build-tool.sh
-- [ ] T022 [US1] Add runtime component builds (netavark, aardvark-dns - Rust) to scripts/build-tool.sh
-- [ ] T023 [US1] Add runtime component builds (pasta, catatonit) to scripts/build-tool.sh
+- [X] T019 [US1] Add podman full variant build logic (with runtime components) to scripts/build-tool.sh
+- [X] T020 [US1] Add podman minimal variant build logic to scripts/build-tool.sh
+- [X] T021 [US1] Add runtime component builds (crun, conmon, fuse-overlayfs) to scripts/build-tool.sh
+- [X] T022 [US1] Add runtime component builds (netavark, aardvark-dns - Rust) to scripts/build-tool.sh
+- [X] T023 [US1] Add runtime component builds (pasta, catatonit) to scripts/build-tool.sh
 
 ### Cross-Compilation Setup
 
-- [ ] T024 [US1] Add Zig cross-compile setup for amd64 target in scripts/build-tool.sh
-- [ ] T025 [US1] Add Zig cross-compile setup for arm64 target in scripts/build-tool.sh
-- [ ] T026 [US1] Add matrix build strategy (amd64 + arm64) to .github/workflows/build-podman.yml
-- [ ] T027 [P] [US1] Add matrix build strategy to .github/workflows/build-buildah.yml
-- [ ] T028 [P] [US1] Add matrix build strategy to .github/workflows/build-skopeo.yml
+- [X] T024 [US1] Add Zig cross-compile setup for amd64 target in scripts/build-tool.sh
+- [X] T025 [US1] Add Zig cross-compile setup for arm64 target in scripts/build-tool.sh
+- [X] T026 [US1] Add matrix build strategy (amd64 + arm64) to .github/workflows/build-podman.yml
+- [X] T027 [P] [US1] Add matrix build strategy to .github/workflows/build-buildah.yml
+- [X] T028 [P] [US1] Add matrix build strategy to .github/workflows/build-skopeo.yml
 
 ### Smoke Tests
 
-- [ ] T029 [US1] Create smoke test script with ldd check and --version verification at scripts/test-static.sh
-- [ ] T030 [US1] Add smoke test job to build workflows
+- [X] T029 [US1] Create smoke test script with ldd check and --version verification at scripts/test-static.sh
+- [X] T030 [US1] Add smoke test job to build workflows
 
 **Checkpoint**: At this point, User Story 1 should be fully functional - binaries can be built and downloaded
 
@@ -110,20 +110,20 @@ Dockerfile.*             # Fallback build containers
 
 ### Checksum Generation
 
-- [ ] T031 [US2] Add SHA256 checksum generation to scripts/package.sh
-- [ ] T032 [US2] Add checksums.txt upload to build workflows release job
+- [X] T031 [US2] Add SHA256 checksum generation to scripts/package.sh
+- [X] T032 [US2] Add checksums.txt upload to build workflows release job
 
 ### Signing Implementation
 
-- [ ] T033 [US2] Add cosign-installer step to .github/workflows/build-podman.yml
-- [ ] T034 [P] [US2] Add cosign-installer step to .github/workflows/build-buildah.yml
-- [ ] T035 [P] [US2] Add cosign-installer step to .github/workflows/build-skopeo.yml
-- [ ] T036 [US2] Implement cosign sign-blob with OIDC in scripts/sign-release.sh
-- [ ] T037 [US2] Add signature upload to release jobs in build workflows
+- [X] T033 [US2] Add cosign-installer step to .github/workflows/build-podman.yml
+- [X] T034 [P] [US2] Add cosign-installer step to .github/workflows/build-buildah.yml
+- [X] T035 [P] [US2] Add cosign-installer step to .github/workflows/build-skopeo.yml
+- [X] T036 [US2] Implement cosign sign-blob with OIDC in scripts/sign-release.sh
+- [X] T037 [US2] Add signature upload to release jobs in build workflows
 
 ### Verification Documentation
 
-- [ ] T038 [US2] Add verification instructions to README.md (sha256sum, cosign verify)
+- [X] T038 [US2] Add verification instructions to README.md (sha256sum, cosign verify)
 
 **Checkpoint**: At this point, User Story 2 should work - all releases have verifiable checksums and signatures
 

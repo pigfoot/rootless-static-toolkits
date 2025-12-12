@@ -1,0 +1,76 @@
+# Fallback build environment for buildah using Alpine Linux + musl
+# This is used when Zig cross-compilation fails or is not available
+# Usage: docker build -f Dockerfile.buildah --build-arg ARCH=amd64 -t buildah-builder .
+
+ARG ARCH=amd64
+FROM alpine:3.19 AS builder
+
+# Install build dependencies
+RUN apk add --no-cache \
+    bash \
+    git \
+    make \
+    cmake \
+    ninja \
+    gcc \
+    g++ \
+    musl-dev \
+    linux-headers \
+    pkgconfig \
+    go \
+    btrfs-progs \
+    btrfs-progs-dev \
+    lvm2-dev \
+    device-mapper \
+    glib-static \
+    gpgme-dev \
+    libassuan-dev \
+    protobuf-dev \
+    protobuf-c-dev \
+    libseccomp-dev \
+    libseccomp-static \
+    libselinux-dev \
+    ostree-dev \
+    openssl \
+    iptables \
+    ca-certificates \
+    go-md2man
+
+# Set Go environment
+ENV GOPATH=/go \
+    PATH=/go/bin:/usr/local/go/bin:$PATH \
+    CGO_ENABLED=1 \
+    GOOS=linux
+
+# Build architecture
+ARG ARCH
+ENV GOARCH=${ARCH}
+
+# Build mimalloc
+WORKDIR /build/mimalloc
+RUN git clone --depth 1 --branch v2.1.2 https://github.com/microsoft/mimalloc.git . && \
+    cmake -B build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DMI_BUILD_SHARED=OFF \
+      -DMI_BUILD_STATIC=ON \
+      -DMI_BUILD_OBJECT=OFF \
+      -DMI_BUILD_TESTS=OFF && \
+    ninja -C build && \
+    ninja -C build install
+
+# Copy default config files
+WORKDIR /build
+COPY build/etc/containers/policy.json /etc/containers/policy.json
+COPY build/etc/containers/registries.conf /etc/containers/registries.conf
+
+# Build script will be mounted at runtime
+WORKDIR /workspace
+VOLUME ["/workspace"]
+
+# Default command (override at runtime)
+CMD ["/bin/sh"]
+
+# Labels
+LABEL org.opencontainers.image.title="buildah-builder" \
+      org.opencontainers.image.description="Alpine-based build environment for static buildah" \
+      org.opencontainers.image.source="https://github.com/YOUR_USERNAME/rootless-static-toolkits"

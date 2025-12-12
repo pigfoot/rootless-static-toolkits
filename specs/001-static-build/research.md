@@ -223,6 +223,24 @@ LATEST=$(gh release list --repo containers/podman --limit 1 --exclude-drafts --e
 - pasta: https://passt.top/passt (or github mirror)
 - catatonit: github.com/openSUSE/catatonit
 
+### Version Strategy
+
+**Decision: Use latest stable release for each component**
+
+For each build:
+1. Query upstream repository for latest non-prerelease version
+2. Build all components with their respective latest versions
+3. Bundle together in podman-full tarball
+
+**Rationale:**
+- Simpler implementation (no version mapping maintenance)
+- Runtime components maintain backward compatibility
+- Users get security fixes and improvements
+- If incompatibility occurs, can add version pinning later
+
+**Alternative considered:**
+- Follow podman's recommended versions (complex, requires parsing release notes)
+
 ---
 
 ## 8. Directory Structure in Tarball
