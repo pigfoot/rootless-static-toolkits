@@ -1,15 +1,13 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 0.0.0 → 1.0.0
-Bump rationale: Initial constitution creation (MAJOR)
+Version change: 1.0.0 → 1.1.0
+Bump rationale: Align with implementation decisions from brainstorming (MINOR)
 
-Modified principles: N/A (initial creation)
-Added sections:
-  - Core Principles (5 principles)
-  - Build Requirements
-  - Release Pipeline
-  - Governance
+Modified sections:
+  - Principle III (Reproducible Builds): Updated to reflect Zig primary, Dockerfile fallback
+  - Build Artifacts: Changed .tar.gz to .tar.zst format
+  - Build Environment: Updated to Zig + mimalloc with Alpine fallback
 
 Templates requiring updates:
   - .specify/templates/plan-template.md: ✅ No changes needed (generic template)
@@ -49,9 +47,9 @@ Each tool (podman, buildah, skopeo) MUST be tracked and released independently.
 
 Build processes MUST be deterministic and reproducible.
 
-- All builds run in containerized environments (Alpine-based Dockerfile)
-- Pin specific versions of build dependencies where possible
-- Document exact build steps in Dockerfile and Makefile
+- Pin specific versions of build dependencies (Zig version, Go version, etc.)
+- Document exact build steps in scripts and Makefile
+- Maintain Alpine-based Dockerfile as reproducibility fallback
 - Same inputs MUST produce functionally equivalent outputs
 
 **Rationale**: Reproducibility enables verification, debugging, and trust in the build artifacts.
@@ -97,20 +95,21 @@ For each tool release:
 
 | Artifact | Description |
 |----------|-------------|
-| `{tool}-linux-amd64.tar.gz` | Binary tarball for amd64 |
-| `{tool}-linux-arm64.tar.gz` | Binary tarball for arm64 |
+| `{tool}-linux-amd64.tar.zst` | Binary tarball for amd64 (Zstandard compression) |
+| `{tool}-linux-arm64.tar.zst` | Binary tarball for arm64 (Zstandard compression) |
 | `checksums.txt` | SHA256 checksums for all tarballs |
 | `*.sig` or cosign signature | Sigstore/cosign signatures |
 
 Podman additionally provides:
-- `podman-full-linux-{arch}.tar.gz` - includes all runtime components
-- `podman-minimal-linux-{arch}.tar.gz` - podman binary only
+- `podman-full-linux-{arch}.tar.zst` - includes all runtime components
+- `podman-minimal-linux-{arch}.tar.zst` - podman binary only
 
 ### Build Environment
 
-- Base image: Alpine Linux (latest stable)
-- Compiler: musl-based GCC toolchain
-- Cross-compilation: buildx or native arm64 runners for arm64 builds
+- **Primary**: Zig cross-compiler with musl target (simpler cross-compilation)
+- **Fallback**: Alpine Linux container with musl-based GCC toolchain
+- **Allocator**: mimalloc (statically linked, replaces musl's slow allocator)
+- **Cross-compilation**: Zig cross-compile on amd64 runner; native arm64 runner as fallback
 
 ## Release Pipeline
 
@@ -161,4 +160,4 @@ Method: GitHub API check against upstream repos
 - Upstream reference: https://github.com/mgoltzsche/podman-static
 - Container tools: https://github.com/containers
 
-**Version**: 1.0.0 | **Ratified**: 2025-12-12 | **Last Amended**: 2025-12-12
+**Version**: 1.1.0 | **Ratified**: 2025-12-12 | **Last Amended**: 2025-12-12
