@@ -101,30 +101,12 @@ jobs:
             fi
           done
 
-      - name: Setup cosign
-        uses: sigstore/cosign-installer@v4.0.0
-
-      - name: Sign tarball
-        env:
-          VARIANT: ${{ matrix.variant }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          TARBALL="build/podman-${VARIANT}-linux-${ARCH}.tar.zst"
-          if [ -f "$TARBALL" ]; then
-            echo "Signing $TARBALL..."
-            cosign sign-blob --bundle="${TARBALL}.sig" "$TARBALL"
-          else
-            echo "Error: Tarball not found: $TARBALL"
-            exit 1
-          fi
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
         with:
           name: podman-${{ matrix.variant }}-${{ matrix.arch }}
           path: |
             build/podman-${{ matrix.variant }}-linux-${{ matrix.arch }}.tar.zst
-            build/podman-${{ matrix.variant }}-linux-${{ matrix.arch }}.tar.zst.sig
           retention-days: 7
 
   release:
@@ -145,14 +127,15 @@ jobs:
         run: |
           mkdir -p release/
           find artifacts/ -type f -name "*.tar.zst" -exec cp {} release/ \;
-          find artifacts/ -type f -name "*.sig" -exec cp {} release/ \;
           ls -lh release/
 
-      - name: Generate checksums
-        working-directory: release/
+      - name: Setup cosign
+        uses: sigstore/cosign-installer@v4.0.0
+
+      - name: Generate checksums and sign artifacts
         run: |
-          sha256sum *.tar.zst > checksums.txt
-          cat checksums.txt
+          chmod +x scripts/sign-release.sh
+          scripts/sign-release.sh release/
 
       - name: Create Release
         env:
@@ -174,12 +157,40 @@ jobs:
             - `podman-minimal`: Binary only
 
           **INSTALLATION**
-          Download and extract the tarball for your architecture and variant.
-          See the example commands in the release assets section.
+          ```bash
+          # Download tarball for your architecture and variant
+          wget https://github.com/${{ github.repository }}/releases/download/podman-${{ inputs.version }}/podman-full-linux-amd64.tar.zst
+
+          # Extract
+          tar -xf podman-full-linux-amd64.tar.zst
+          cd podman-${{ inputs.version }}
+
+          # Install system-wide
+          sudo cp -r usr/* /usr/
+          sudo cp -r etc/* /etc/
+
+          # Or use from current directory
+          export PATH=$PWD/usr/local/bin:$PATH
+          podman --version
+          ```
 
           **VERIFICATION**
-          All tarballs include checksums.txt and .sig signature files.
-          Use cosign to verify signatures (keyless OIDC signing).
+
+          All tarballs include SHA256 checksums and cosign signatures (keyless OIDC).
+
+          Verify checksum:
+          ```bash
+          sha256sum -c checksums.txt --ignore-missing
+          ```
+
+          Verify cosign signature (example):
+          ```bash
+          cosign verify-blob \
+            --bundle=podman-full-linux-amd64.tar.zst.bundle \
+            --certificate-identity-regexp='https://github.com/.*' \
+            --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
+            podman-full-linux-amd64.tar.zst
+          ```
 
           **BUILD DETAILS**
             - Built inside docker.io/ubuntu:rolling container using podman
