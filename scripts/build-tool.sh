@@ -221,15 +221,24 @@ export CGO_ENABLED=1
 export GOOS=linux
 export GOARCH="$GOARCH"
 export CGO_CFLAGS="-I$MIMALLOC_DIR/include"
-export CGO_LDFLAGS="-L$MIMALLOC_LIB_DIR -lmimalloc -static"
+# NOTE: mimalloc linking moved to -extldflags to avoid duplication
+export CGO_LDFLAGS=""
 
 # Build tags for static linking
 BUILD_TAGS="containers_image_openpgp exclude_graphdriver_btrfs exclude_graphdriver_devicemapper"
 
 echo "Building $TOOL binary..."
+# Use --whole-archive in extldflags to force mimalloc's malloc to override musl malloc
+# This ensures mimalloc is only linked once (not repeated for each CGO package)
+# Build extldflags with expanded variables
+EXTLDFLAGS="-static -L${MIMALLOC_LIB_DIR} -Wl,--whole-archive -l:libmimalloc.a -Wl,--no-whole-archive -lpthread"
+
+echo "Linking with mimalloc from: $MIMALLOC_LIB_DIR"
+echo "EXTLDFLAGS: $EXTLDFLAGS"
+
 go build \
   -tags "$BUILD_TAGS" \
-  -ldflags "-linkmode external -extldflags '-static' -s -w" \
+  -ldflags "-linkmode external -extldflags \"${EXTLDFLAGS}\" -s -w" \
   -o "$INSTALL_DIR/bin/$TOOL" \
   ./cmd/$TOOL
 
@@ -241,6 +250,10 @@ else
   echo "⚠ Warning: Binary may have dynamic dependencies:"
   ldd "$INSTALL_DIR/bin/$TOOL" || true
 fi
+
+# Note: Verify mimalloc usage at runtime with:
+# MIMALLOC_VERBOSE=1 ./$TOOL --version
+# If mimalloc is active, it will show initialization messages and configuration
 
 # For podman, extract helper binaries
 if [[ "$TOOL" == "podman" ]]; then
@@ -437,12 +450,12 @@ if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
       conmon)
         # conmon: Use direct make, NOT autotools configure
         # Makefile auto-enables systemd if not using -static flag
-        echo "Building conmon (plain Makefile)..."
+        echo "Building conmon (plain Makefile with mimalloc)..."
         make clean 2>/dev/null || true
         make git-vars bin/conmon \
           PKG_CONFIG='pkg-config --static' \
-          CFLAGS='-std=c99 -Os -Wall -Wextra -static' \
-          LDFLAGS='-s -w -static' || {
+          CFLAGS="-std=c99 -Os -Wall -Wextra -static -I$MIMALLOC_DIR/include" \
+          LDFLAGS="-s -w -static -L$MIMALLOC_LIB_DIR -Wl,--whole-archive -l:libmimalloc.a -Wl,--no-whole-archive -lpthread" || {
             echo "⚠ Warning: Failed to build $component, skipping..."
             continue
           }
@@ -689,17 +702,20 @@ if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
 
       crun)
         # crun: autotools with specific flags to disable systemd
-        echo "Building crun (autotools, --disable-systemd)..."
+        echo "Building crun (autotools, --disable-systemd, with mimalloc)..."
         ./autogen.sh || {
           echo "⚠ Warning: autogen.sh failed for crun"
           continue
         }
-        ./configure --disable-systemd --enable-embedded-yajl || {
+        # Add mimalloc to configure
+        ./configure --disable-systemd --enable-embedded-yajl \
+          CFLAGS="-I$MIMALLOC_DIR/include" \
+          LDFLAGS="$LDFLAGS -L$MIMALLOC_LIB_DIR -Wl,--whole-archive -l:libmimalloc.a -Wl,--no-whole-archive -lpthread" || {
           echo "⚠ Warning: configure failed for crun"
           continue
         }
         make clean 2>/dev/null || true
-        # Preserve LDFLAGS from environment (contains -L for libseccomp)
+        # Preserve LDFLAGS from environment (contains -L for libseccomp and mimalloc)
         make LDFLAGS="$LDFLAGS -static-libgcc -all-static" EXTRA_LDFLAGS='-s -w' -j$(nproc) || {
           echo "⚠ Warning: make failed for crun"
           continue

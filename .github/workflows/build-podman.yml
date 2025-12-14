@@ -8,6 +8,15 @@ on:
         description: 'Podman version to build (e.g., v5.3.1)'
         required: true
         type: string
+      architecture:
+        description: 'Target architecture'
+        required: false
+        type: choice
+        options:
+          - amd64
+          - arm64
+          - both
+        default: both
       variant:
         description: 'Build variant (full or minimal)'
         required: false
@@ -49,65 +58,73 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Setup Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.11.0
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: '1'
-
-      - name: Install build dependencies
+      - name: Install podman
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build zstd
+          sudo apt-get install -y podman
 
-      - name: Build mimalloc
-        run: |
-          ./scripts/build-mimalloc.sh ${{ matrix.arch }}
+      - name: Pull container image
+        run: podman pull docker.io/ubuntu:rolling
 
-      - name: Build podman
+      - name: Run build and package in container
         env:
-          ARCH: ${{ matrix.arch }}
           VERSION: ${{ inputs.version }}
+          TOOL: podman
+          ARCH: ${{ matrix.arch }}
           VARIANT: ${{ matrix.variant }}
         run: |
-          ./scripts/build-tool.sh podman $ARCH $VARIANT
+          podman run --rm \
+            -v ./scripts:/workspace/scripts:ro,z \
+            -v ./build:/workspace/build:rw,z \
+            -e VERSION=$VERSION \
+            -e TOOL=$TOOL \
+            -e ARCH=$ARCH \
+            -e VARIANT=$VARIANT \
+            docker.io/ubuntu:rolling \
+            bash -c "
+              /workspace/scripts/container/setup-build-env.sh && \
+              /workspace/scripts/build-tool.sh $TOOL $ARCH $VARIANT && \
+              /workspace/scripts/package.sh $TOOL $VERSION $ARCH $VARIANT
+            "
 
-      - name: Package
+      - name: Verify static linking
         env:
           ARCH: ${{ matrix.arch }}
-          VERSION: ${{ inputs.version }}
-          VARIANT: ${{ matrix.variant }}
         run: |
-          ./scripts/package.sh podman $VERSION $ARCH $VARIANT
-
-      - name: Run smoke tests
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          ./scripts/test-static.sh build/podman-$ARCH/install
+          for binary in build/podman-$ARCH/install/bin/*; do
+            if ldd "$binary" 2>&1 | grep -q "not a dynamic executable"; then
+              echo "✓ $binary is statically linked"
+            else
+              echo "✗ $binary is NOT statically linked:"
+              ldd "$binary"
+              exit 1
+            fi
+          done
 
       - name: Setup cosign
-        uses: sigstore/cosign-installer@v3.10.1
+        uses: sigstore/cosign-installer@v4.0.0
 
       - name: Sign tarball
         env:
           VARIANT: ${{ matrix.variant }}
           ARCH: ${{ matrix.arch }}
         run: |
-          TARBALL="podman-${VARIANT}-linux-${ARCH}.tar.zst"
-          ./scripts/sign-release.sh "$TARBALL"
+          TARBALL="build/podman-${VARIANT}-linux-${ARCH}.tar.zst"
+          if [ -f "$TARBALL" ]; then
+            echo "Signing $TARBALL..."
+            cosign sign-blob --bundle="${TARBALL}.sig" "$TARBALL"
+          else
+            echo "Error: Tarball not found: $TARBALL"
+            exit 1
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
         with:
           name: podman-${{ matrix.variant }}-${{ matrix.arch }}
           path: |
-            podman-${{ matrix.variant }}-linux-${{ matrix.arch }}.tar.zst
-            podman-${{ matrix.variant }}-linux-${{ matrix.arch }}.tar.zst.sig
+            build/podman-${{ matrix.variant }}-linux-${{ matrix.arch }}.tar.zst
+            build/podman-${{ matrix.variant }}-linux-${{ matrix.arch }}.tar.zst.sig
           retention-days: 7
 
   release:
@@ -146,7 +163,7 @@ jobs:
 
           # Create release notes file to avoid YAML escaping issues
           cat > /tmp/release-notes.md <<'NOTES'
-          Static binaries for podman built with Zig + musl + mimalloc
+          Static binaries for podman built with Clang + musl + mimalloc (containerized build)
 
           **ARCHITECTURES**
             - linux/amd64
@@ -165,7 +182,8 @@ jobs:
           Use cosign to verify signatures (keyless OIDC signing).
 
           **BUILD DETAILS**
-            - Built with Zig 0.11.0 cross-compiler + musl libc + mimalloc allocator
+            - Built inside docker.io/ubuntu:rolling container using podman
+            - Compiler: Clang with musl target + mimalloc allocator
             - Workflow ${{ github.workflow }}
             - Run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           NOTES

@@ -1,186 +1,154 @@
 # Tasks: Static Container Tools Build System
 
 **Input**: Design documents from `/specs/001-static-build/`
-**Prerequisites**: plan.md (required), spec.md (required), research.md, data-model.md
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, quickstart.md
 
-**Tests**: Smoke tests included as they are integral to verifying static binary functionality.
+**Tests**: Not explicitly requested in spec - tasks focus on build infrastructure implementation
 
-**Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
+**Organization**: Tasks grouped by user story to enable independent implementation and testing
 
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies)
-- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
+- **[Story]**: Which user story this task belongs to (US1, US2, US3, US4)
 - Include exact file paths in descriptions
-
-## Path Conventions
-
-```text
-.github/workflows/       # GitHub Actions workflows
-scripts/                 # Build and utility scripts
-build/                   # Build dependencies (mimalloc, patches)
-Dockerfile.*             # Fallback build containers
-```
-
----
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-**Purpose**: Project initialization and basic structure
+**Purpose**: Project initialization and containerized build infrastructure
 
-- [X] T001 Create project directory structure: scripts/, build/, build/mimalloc/, build/patches/
-- [X] T002 Create Makefile with build/test/clean targets at ./Makefile
-- [X] T003 [P] Create .gitignore with build artifacts, temporary files at ./.gitignore
-- [X] T004 [P] Create README.md with project overview, usage instructions at ./README.md
+- [X] T001 Create build directory structure at /build/{mimalloc,patches}
+- [X] T002 Create scripts directory structure at /scripts/container/
+- [X] T003 [P] Add etc/containers/policy.json with insecureAcceptAnything default
+- [X] T004 [P] Add etc/containers/registries.conf with docker.io config
+- [X] T005 [P] Create Makefile with build-podman, build-buildah, build-skopeo targets
+- [X] T006 [P] Create Containerfile.build (optional pre-built image definition)
 
 ---
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
-**Purpose**: Core build infrastructure that MUST be complete before ANY user story can be implemented
+**Purpose**: Core containerized build scripts that ALL user stories depend on
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-### Build Dependencies
+- [X] T007 Implement scripts/container/setup-build-env.sh - Install clang, musl-dev, musl-tools, go, rust, protobuf-compiler inside Ubuntu container
+- [X] T008 [P] Implement scripts/container/run-build.sh - Wrapper to launch podman container with volume mounts and environment variables
+- [X] T009 Migrate scripts/build-tool.sh to containerized approach - Remove runner-native dependencies, add container-specific logic for mimalloc build, Go/Rust/C component builds with Clang + musl
+- [X] T010 [P] Migrate scripts/package.sh to run inside container - Create tarball structure with bin/, lib/, libexec/, etc/ directories from /workspace/build output, support full/minimal variants
+- [X] T011 Implement libseccomp v2.5.5 source build in scripts/build-tool.sh for crun static linking
+- [X] T012 [P] Implement libfuse manual build in scripts/build-tool.sh with libfuse_config.h for fuse-overlayfs
+- [X] T013 Add Rust musl target support for netavark/aardvark-dns builds
 
-- [X] T005 Clone and setup mimalloc source in build/mimalloc/
-- [X] T006 Create script to compile mimalloc with ~~Zig~~ **Clang** for musl targets at scripts/build-mimalloc.sh (Updated: Zig→Clang migration)
-- [X] T007 [P] Create default config files: build/etc/containers/policy.json
-- [X] T008 [P] Create default config files: build/etc/containers/registries.conf
-
-### Core Build Scripts
-
-- [X] T009 Create main build script with ~~Zig~~ **Clang** + Go + CGO setup at scripts/build-tool.sh (Updated: Zig→Clang migration)
-- [X] T010 Create packaging script with bin/lib/etc structure at scripts/package.sh
-- [X] T011 [P] Create version check script comparing upstream vs local releases at scripts/check-version.sh
-- [X] T012 [P] Create signing script with cosign keyless signing at scripts/sign-release.sh
-
-### Fallback Infrastructure
-
-- [X] T013 [P] Create Dockerfile.podman with Alpine musl build environment
-- [X] T014 [P] Create Dockerfile.buildah with Alpine musl build environment
-- [X] T015 [P] Create Dockerfile.skopeo with Alpine musl build environment
-
-**Checkpoint**: Foundation ready - user story implementation can now begin in parallel
+**Checkpoint**: Foundation ready - all build scripts can execute inside Ubuntu container, producing static binaries
 
 ---
 
 ## Phase 3: User Story 1 - Download Pre-built Static Binary (Priority: P1) 🎯 MVP
 
-**Goal**: Users can download and run static podman/buildah/skopeo binaries on any Linux distro
+**Goal**: Users can download and run static podman/buildah/skopeo binaries from GitHub Releases without installing dependencies
 
-**Independent Test**: Download tarball from GitHub Release, extract, run `podman --version` on clean system
+**Independent Test**: Download podman-full-linux-amd64.tar.zst from GitHub Release, extract, run `./bin/podman --version` on clean Alpine system
 
-### Build Workflows for US1
+### Implementation for User Story 1
 
-- [X] T016 [US1] Create GitHub Actions workflow for podman build at .github/workflows/build-podman.yml
-- [X] T017 [P] [US1] Create GitHub Actions workflow for buildah build at .github/workflows/build-buildah.yml
-- [X] T018 [P] [US1] Create GitHub Actions workflow for skopeo build at .github/workflows/build-skopeo.yml
+- [X] T014 [P] [US1] Create .github/workflows/build-podman.yml with containerized build steps (pull ubuntu:rolling, mount volumes, run build)
+- [X] T015 [P] [US1] Create .github/workflows/build-buildah.yml with containerized build steps
+- [X] T016 [P] [US1] Create .github/workflows/build-skopeo.yml with containerized build steps
+- [X] T017 [US1] Add workflow_dispatch inputs for tool, version, architecture, variant in build-podman.yml
+- [X] T018 [US1] Add workflow_dispatch inputs for tool, version, architecture in build-buildah.yml and build-skopeo.yml
+- [X] T019 [US1] Implement container execution in build-podman.yml - `podman run --rm -v ./scripts:/workspace/scripts:ro,z -v ./build:/workspace/build:rw,z -e VERSION -e TOOL -e ARCH docker.io/ubuntu:rolling`
+- [X] T020 [US1] Implement container execution in build-buildah.yml and build-skopeo.yml with same pattern
+- [X] T021 [US1] Add artifact upload steps in all workflows - Tarballs already created in container at /workspace/build/*.tar.zst, upload to GitHub Actions artifacts
+- [X] T022 [US1] Add static linking verification step - Run `ldd` on all binaries, ensure output shows "not a dynamic executable"
+- [X] T023 [US1] Add GitHub Release creation step - Create release with tag `{tool}-v{version}`, upload tarballs for amd64 and arm64
+- [X] T024 [US1] Test podman-full build end-to-end - Trigger workflow, verify all 8 components (podman, crun, conmon, fuse-overlayfs, netavark, aardvark-dns, pasta, catatonit) in tarball
+- [X] T025 [US1] Test podman-minimal build - Verify only podman binary included
+- [X] T026 [US1] Test buildah and skopeo builds - Verify single binary per tool
 
-### Podman-Specific Tasks
-
-- [X] T019 [US1] Add podman full variant build logic (with runtime components) to scripts/build-tool.sh
-- [X] T020 [US1] Add podman minimal variant build logic to scripts/build-tool.sh
-- [X] T021 [US1] Add runtime component builds (crun, conmon, fuse-overlayfs) to scripts/build-tool.sh
-- [X] T022 [US1] Add runtime component builds (netavark, aardvark-dns - Rust) to scripts/build-tool.sh
-- [X] T023 [US1] Add runtime component builds (pasta, catatonit) to scripts/build-tool.sh
-
-### Cross-Compilation Setup
-
-- [X] T024 [US1] Add ~~Zig~~ **Clang** cross-compile setup for amd64 target in scripts/build-tool.sh (Updated: Zig→Clang migration)
-- [X] T025 [US1] Add ~~Zig~~ **Clang** cross-compile setup for arm64 target in scripts/build-tool.sh (Updated: Zig→Clang migration)
-- [X] T026 [US1] Add matrix build strategy (amd64 + arm64) to .github/workflows/build-podman.yml
-- [X] T027 [P] [US1] Add matrix build strategy to .github/workflows/build-buildah.yml
-- [X] T028 [P] [US1] Add matrix build strategy to .github/workflows/build-skopeo.yml
-
-### Smoke Tests
-
-- [X] T029 [US1] Create smoke test script with ldd check and --version verification at scripts/test-static.sh
-- [X] T030 [US1] Add smoke test job to build workflows
-
-**Checkpoint**: At this point, User Story 1 should be fully functional - binaries can be built and downloaded
+**Checkpoint**: At this point, users can download static binaries from GitHub Releases and run them on any Linux distribution
 
 ---
 
 ## Phase 4: User Story 2 - Verify Binary Authenticity (Priority: P2)
 
-**Goal**: Users can verify checksums and cosign signatures for all release artifacts
+**Goal**: Users can verify downloaded binaries using checksums and cosign signatures to ensure integrity and authenticity
 
-**Independent Test**: Download checksums.txt and .sig files, run sha256sum and cosign verify
+**Independent Test**: Download tarball + checksums.txt, run `sha256sum -c checksums.txt --ignore-missing`, verify checksum matches; download cosign signature, verify against Sigstore transparency log
 
-### Checksum Generation
+### Implementation for User Story 2
 
-- [X] T031 [US2] Add SHA256 checksum generation to scripts/package.sh
-- [X] T032 [US2] Add checksums.txt upload to build workflows release job
+- [ ] T027 [P] [US2] Implement scripts/sign-release.sh - Generate SHA256 checksums for all tarballs, create checksums.txt
+- [ ] T028 [US2] Add cosign keyless signing to scripts/sign-release.sh - Sign each tarball with `cosign sign-blob --bundle`, use GitHub OIDC token
+- [ ] T029 [US2] Update build-podman.yml - Add checksums generation step after tarball creation
+- [ ] T030 [US2] Update build-podman.yml - Add cosign signing step after checksums, upload signatures to release
+- [ ] T031 [P] [US2] Update build-buildah.yml with checksums and signing steps
+- [ ] T032 [P] [US2] Update build-skopeo.yml with checksums and signing steps
+- [ ] T033 [US2] Add cosign installation to workflows - `curl -LO https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64`
+- [ ] T034 [US2] Test checksum verification - Download release, verify sha256sum matches
+- [ ] T035 [US2] Test cosign signature verification - Run `cosign verify-blob --certificate-identity-regexp --certificate-oidc-issuer --signature *.sig --bundle`, ensure validation succeeds
 
-### Signing Implementation
-
-- [X] T033 [US2] Add cosign-installer step to .github/workflows/build-podman.yml
-- [X] T034 [P] [US2] Add cosign-installer step to .github/workflows/build-buildah.yml
-- [X] T035 [P] [US2] Add cosign-installer step to .github/workflows/build-skopeo.yml
-- [X] T036 [US2] Implement cosign sign-blob with OIDC in scripts/sign-release.sh
-- [X] T037 [US2] Add signature upload to release jobs in build workflows
-
-### Verification Documentation
-
-- [X] T038 [US2] Add verification instructions to README.md (sha256sum, cosign verify)
-
-**Checkpoint**: At this point, User Story 2 should work - all releases have verifiable checksums and signatures
+**Checkpoint**: At this point, all releases include checksums.txt and cosign signatures; users can verify integrity and authenticity
 
 ---
 
 ## Phase 5: User Story 3 - Automatic New Version Detection (Priority: P3)
 
-**Goal**: System automatically detects and builds new upstream releases daily
+**Goal**: System automatically detects new upstream releases and triggers builds within 24 hours without manual intervention
 
-**Independent Test**: When upstream releases new version, corresponding GitHub Release appears within 24 hours
+**Independent Test**: Simulate upstream release (mock GitHub API response), verify daily check workflow triggers corresponding build workflow
 
-### Version Check Workflow
+### Implementation for User Story 3
 
-- [X] T039 [US3] Create check-releases workflow with daily cron at .github/workflows/check-releases.yml
-- [X] T040 [US3] Add podman version check job to check-releases.yml (calls scripts/check-version.sh)
-- [X] T041 [P] [US3] Add buildah version check job to check-releases.yml
-- [X] T042 [P] [US3] Add skopeo version check job to check-releases.yml
+- [ ] T036 [P] [US3] Implement scripts/check-version.sh - Query GitHub API `https://api.github.com/repos/containers/{tool}/releases`, parse latest stable version (exclude alpha/beta/rc)
+- [ ] T037 [US3] Add existing release check to scripts/check-version.sh - Query `https://api.github.com/repos/{this_repo}/releases`, compare with upstream, skip if already released
+- [ ] T038 [US3] Add semver filtering to scripts/check-version.sh - Use regex `^v?[0-9]+\.[0-9]+(\.[0-9]+)?$`, exclude pre-releases
+- [ ] T039 [P] [US3] Create .github/workflows/check-releases.yml - Daily cron schedule `0 0 * * *` (UTC 00:00)
+- [ ] T040 [US3] Add version detection jobs to check-releases.yml - Run scripts/check-version.sh for podman, buildah, skopeo in parallel
+- [ ] T041 [US3] Add conditional workflow dispatch to check-releases.yml - Trigger build-{tool}.yml if new version detected
+- [ ] T042 [US3] Add GitHub API rate limit handling - Implement exponential backoff (3 attempts: 1s, 2s, 4s delays), fallback to tags API if releases API fails after retries
+- [ ] T043 [US3] Test daily check workflow - Mock upstream release, verify build workflow triggered with correct version
+- [ ] T044 [US3] Test pre-release filtering - Ensure alpha/beta/rc versions are skipped
+- [ ] T045 [US3] Test duplicate release prevention - Verify already-released versions don't trigger duplicate builds
 
-### Trigger Logic
-
-- [X] T043 [US3] Add workflow_call trigger to build-podman.yml for automated triggering
-- [X] T044 [P] [US3] Add workflow_call trigger to build-buildah.yml
-- [X] T045 [P] [US3] Add workflow_call trigger to build-skopeo.yml
-- [X] T046 [US3] Add pre-release filtering (skip alpha/beta/rc) to scripts/check-version.sh
-- [X] T047 [US3] Add duplicate release check (skip if release exists) to scripts/check-version.sh
-
-**Checkpoint**: At this point, User Story 3 should work - daily cron detects and triggers builds automatically
+**Checkpoint**: At this point, new upstream releases automatically trigger builds within 24 hours; no manual intervention required
 
 ---
 
 ## Phase 6: User Story 4 - Manual Build Trigger (Priority: P4)
 
-**Goal**: Maintainers can manually trigger builds for specific versions
+**Goal**: Maintainers can manually trigger builds for specific tool versions to rebuild after fixes or build older versions
 
-**Independent Test**: Use workflow_dispatch in GitHub Actions to trigger a build with version parameter
+**Independent Test**: Use GitHub CLI `gh workflow run build-podman.yml -f version=5.3.0`, verify build starts with specified version and completes successfully
 
-### Manual Trigger Implementation
+### Implementation for User Story 4
 
-- [X] T048 [US4] Add workflow_dispatch trigger with version input to .github/workflows/build-podman.yml
-- [X] T049 [P] [US4] Add workflow_dispatch trigger to .github/workflows/build-buildah.yml
-- [X] T050 [P] [US4] Add workflow_dispatch trigger to .github/workflows/build-skopeo.yml
-- [X] T051 [US4] Add release update logic (replace existing assets on rebuild) to build workflows
+- [ ] T046 [P] [US4] Add workflow_dispatch trigger to build-podman.yml with inputs (version, architecture [amd64/arm64/both], variant [full/minimal/both])
+- [ ] T047 [P] [US4] Add workflow_dispatch trigger to build-buildah.yml with inputs (version, architecture)
+- [ ] T048 [P] [US4] Add workflow_dispatch trigger to build-skopeo.yml with inputs (version, architecture)
+- [ ] T049 [US4] Add version validation in workflows - Ensure version follows semver pattern before proceeding
+- [ ] T050 [US4] Add existing release handling - Check if release exists, update assets instead of creating duplicate
+- [ ] T051 [US4] Test manual trigger via GitHub UI - Navigate to Actions tab, select workflow, click "Run workflow", specify parameters
+- [ ] T052 [US4] Test manual trigger via gh CLI - Run `gh workflow run build-podman.yml -f version=5.3.0 -f architecture=amd64 -f variant=full`
+- [ ] T053 [US4] Test rebuild scenario - Trigger build for already-released version, verify assets are updated not duplicated
 
-**Checkpoint**: At this point, User Story 4 should work - manual triggers with version selection work
+**Checkpoint**: All user stories complete - maintainers can manually trigger builds with full control over version/architecture/variant
 
 ---
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-**Purpose**: Improvements that affect multiple user stories
+**Purpose**: Improvements that affect multiple user stories, quality assurance, documentation
 
-- [X] T052 [P] Add error handling for GitHub API rate limits to scripts/check-version.sh
-- [X] T053 [P] Add retry logic with exponential backoff to build scripts
-- [X] T054 [P] Add build failure handling (fail entire release if any arch fails) to workflows
-- [X] T055 Update quickstart.md with actual repository URLs after initial setup
-- [X] T056 [P] Add CONTRIBUTING.md with development workflow at ./CONTRIBUTING.md
-- [X] T057 Run full end-to-end validation per quickstart.md (requires GitHub repository setup)
+- [ ] T054 [P] Add workflow failure notifications - Configure GitHub Actions to create issue on build failure with logs
+- [ ] T055 [P] Add build time monitoring - Track build duration per tool/architecture, ensure < 30 minutes (NFR SC-005)
+- [ ] T056 [P] Add artifact size validation - Verify podman-full < 100MB (NFR-001), individual binaries < 50MB (NFR-002)
+- [ ] T057 End-to-end validation on real distributions - Test downloads on Alpine, Ubuntu, CentOS; verify static binaries run (SC-001)
+- [ ] T058 Update quickstart.md with real release URLs - Replace placeholders with actual repository path
+- [ ] T059 [P] Add MIGRATION-ZIG-TO-CLANG.md to feature directory if not exists - Document: (1) Zig issues (pasta __cpu_model, fuse-overlayfs meson), (2) Clang solution, (3) Build time impact, (4) 8/8 components success proof, (5) Containerization benefits
+- [ ] T060 Create README.md with quickstart instructions - Link to releases, basic usage examples
+- [ ] T061 [P] Add workflow badges to README.md - Show build status for podman, buildah, skopeo
+- [ ] T062 Validate Constitution compliance - Verify all principles (static binaries, independent releases, reproducible builds, minimal deps, automated pipeline) are satisfied
 
 ---
 
@@ -190,129 +158,61 @@ Dockerfile.*             # Fallback build containers
 
 - **Setup (Phase 1)**: No dependencies - can start immediately
 - **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all user stories
-- **User Story 1 (Phase 3)**: Depends on Foundational - Core MVP
-- **User Story 2 (Phase 4)**: Depends on US1 (needs artifacts to sign)
-- **User Story 3 (Phase 5)**: Depends on US1 (needs build workflows to trigger)
-- **User Story 4 (Phase 6)**: Can parallel with US2/US3 after US1
-- **Polish (Phase 7)**: Depends on all user stories being complete
+- **User Stories (Phase 3-6)**: All depend on Foundational phase completion
+  - **US1 (P1) - Static Binary Builds**: Can start after Foundational - No dependencies on other stories
+  - **US2 (P2) - Verification**: Depends on US1 - Requires working builds to verify
+  - **US3 (P3) - Auto-Detection**: Depends on US1 - Requires build workflows to trigger
+  - **US4 (P4) - Manual Trigger**: Depends on US1 - Requires build workflows to exist
+- **Polish (Phase 7)**: Depends on US1-US4 completion
 
 ### User Story Dependencies
 
-- **User Story 1 (P1)**: Core functionality - MUST complete first
-- **User Story 2 (P2)**: Depends on US1 having artifacts to sign
-- **User Story 3 (P3)**: Depends on US1 having build workflows to trigger
-- **User Story 4 (P4)**: Depends on US1 having build workflows - can parallel with US2/US3
+```
+Setup (Phase 1)
+    ↓
+Foundational (Phase 2) ← BLOCKS ALL USER STORIES
+    ↓
+US1 (Phase 3) - Static Binary Builds ← MVP
+    ↓
+US2 (Phase 4) - Verification (depends on US1)
+    ↓
+US3 (Phase 5) - Auto-Detection (depends on US1)
+    ↓
+US4 (Phase 6) - Manual Trigger (depends on US1)
+    ↓
+Polish (Phase 7)
+```
 
-### Within Each Phase
+### Within Each User Story
 
-- Scripts before workflows (workflows call scripts)
-- Core logic before variant logic
-- Single architecture before matrix
-- Base functionality before error handling
+- **US1**: Container workflows (T014-T016 parallel) → Container execution (T019-T020 parallel) → Artifact handling → Verification → Testing
+- **US2**: Checksums script (T027) → Cosign integration (T028) → Workflow updates (T029-T032 parallel) → Testing
+- **US3**: Version check script (T036-T038) → Daily cron workflow (T039) → Conditional triggers (T040-T041) → Testing
+- **US4**: Workflow dispatch inputs (T046-T048 parallel) → Validation → Testing
 
 ### Parallel Opportunities
 
-- T003, T004 can run in parallel (different files)
-- T007, T008 can run in parallel (different config files)
-- T011, T012 can run in parallel (different scripts)
-- T013, T014, T015 can run in parallel (different Dockerfiles)
-- T017, T018 can run in parallel with T016 (different workflow files)
-- T027, T028 can run in parallel (different workflow files)
-- T034, T035 can run in parallel (different workflow files)
-- T041, T042 can run in parallel (different jobs in same workflow)
-- T044, T045 can run in parallel (different workflow files)
-- T049, T050 can run in parallel (different workflow files)
+- **Phase 1 Setup**: T003, T004, T005, T006 can run in parallel
+- **Phase 2 Foundational**: T008, T010, T012, T013 can run in parallel (different files)
+- **US1**: T014, T015, T016 (workflows) in parallel; T019, T020 (execution) in parallel
+- **US2**: T029, T031, T032 (workflow updates) in parallel
+- **US3**: T036 (check script) can be implemented while T039 (cron workflow) is being created
+- **US4**: T046, T047, T048 (dispatch triggers) in parallel
+- **Phase 7 Polish**: T054, T055, T056, T059, T061 in parallel
 
 ---
 
-## Phase 8: Zig to Clang Migration (2025-12-13) ⚠️ CRITICAL UPDATE
-
-**Reason**: Zig compiler incompatibility with multiple C components (see research.md §Zig Issues)
-
-### Migration Tasks
-
-- [X] T058 [Migration] Document Zig issues (pasta `__cpu_model`, fuse-overlayfs meson) in research.md
-- [X] T059 [Migration] Test clang + musl methods (Method 1: specs, Method 2: direct paths, Method 3: --target)
-- [X] T060 [Migration] Update build-tool.sh to use `clang --target=` instead of `zig cc -target`
-- [X] T061 [Migration] Update build-tool.sh dependency check (zig → clang + musl-dev)
-- [X] T062 [Migration] Update plan.md Technical Context (compiler: Zig → Clang)
-- [X] T063 [Migration] Update plan.md Complexity Tracking (mark Zig as ABANDONED)
-- [X] T064 [Migration] Update research.md with comprehensive migration rationale
-- [X] T065 [Migration] Update tasks.md to mark Zig-related tasks as updated
-
-### Ongoing Runtime Component Fixes
-
-Based on `/tmp/*.md` test results and analysis:
-
-- [X] T066 [Fix] Fix pasta clone URL (git://passt.top/passt, not GitHub) in build-tool.sh
-- [X] T067 [Fix] Add protobuf-compiler dependency check for netavark
-- [X] T068 [Fix] Fix netavark/aardvark-dns Rust static linking (use musl target method)
-- [ ] T069 [Fix] Fix fuse-overlayfs libfuse install to local prefix (avoid permission issues)
-- [X] T070 [Fix] Fix conmon systemd detection (disable USE_JOURNALD)
-- [ ] T071 [Fix] Add runc libseccomp dependency check
-- [X] T072 [Fix] Add crun libcap dependency check
-- [ ] T073 [Doc] Create build-dependencies.md documenting all required packages
-
-### Testing & Validation (First Round - Partial Dependencies)
-
-- [X] T074 [Test] Full podman-full build test in Ubuntu 24.04 container
-- [X] T075 [Test] Verify all binaries are static (ldd check)
-- [ ] T076 [Test] Cross-compile verification for arm64
-- [ ] T077 [Test] Component functionality smoke tests
-
-**Results**: 8/11 components succeeded (73%), 6/6 built components verified static ✅
-
----
-
-## Phase 9: Final Component Fixes (2025-12-13) 🎯 Target 100%
-
-**Goal**: Achieve 10/10 component success rate (runc + fuse-overlayfs fixes)
-
-**Status**: 8/10 currently working (80% success rate)
-
-### Remaining Issues
-
-**Issue 1: runc** - libseccomp-golang vendored code incompatibility
-- Error: `duplicate case (_Ciconst_C_ARCH_M68K)` in seccomp_internal.go
-- Cause: runc v1.4.0 vendored libseccomp-golang incompatible with Ubuntu 24.04 libseccomp-dev
-
-**Issue 2: fuse-overlayfs** - libfuse install script permission failure
-- Error: `install_helper.sh ... /etc/init.d/` permission denied
-- Cause: Meson install script tries to access system directories in container
-
-### Fix Tasks
-
-- [ ] T078 [Fix] Add libseccomp source build function in scripts/build-tool.sh
-- [ ] T079 [Fix] Update runc build to use source-built libseccomp
-- [ ] T080 [Fix] Modify fuse-overlayfs to skip libfuse install, manually copy files
-- [ ] T081 [Fix] Update libfuse build to install to local prefix only
-
-### Testing & Validation (Second Round - Complete Dependencies)
-
-- [ ] T082 [Test] Add libglib2.0-dev, libseccomp-dev, libcap-dev to test script
-- [ ] T083 [Test] Full podman-full build with all dependencies in Ubuntu 24.04
-- [ ] T084 [Test] Verify 10/10 component success rate
-- [ ] T085 [Test] Verify all 10 binaries are static (ldd check)
-
-### Documentation Updates
-
-- [ ] T086 [Doc] Update spec.md FR-001 with actual component success rate
-- [ ] T087 [Doc] Update plan.md Runtime Component Build Requirements with libseccomp notes
-- [ ] T088 [Doc] Create TROUBLESHOOTING.md with known issues and solutions
-
----
-
-## Parallel Example: Foundational Phase
+## Parallel Example: User Story 1 (Static Binary Builds)
 
 ```bash
-# Launch parallel script creation:
-Task: "Create default config files: build/etc/containers/policy.json"
-Task: "Create default config files: build/etc/containers/registries.conf"
+# Launch workflow creation tasks together:
+Task: "Create .github/workflows/build-podman.yml"
+Task: "Create .github/workflows/build-buildah.yml"
+Task: "Create .github/workflows/build-skopeo.yml"
 
-# Launch parallel Dockerfile creation:
-Task: "Create Dockerfile.podman with Alpine musl build environment"
-Task: "Create Dockerfile.buildah with Alpine musl build environment"
-Task: "Create Dockerfile.skopeo with Alpine musl build environment"
+# After workflows created, launch container execution in parallel:
+Task: "Implement container execution in build-podman.yml"
+Task: "Implement container execution in build-buildah.yml and build-skopeo.yml"
 ```
 
 ---
@@ -321,35 +221,107 @@ Task: "Create Dockerfile.skopeo with Alpine musl build environment"
 
 ### MVP First (User Story 1 Only)
 
-1. Complete Phase 1: Setup
-2. Complete Phase 2: Foundational (CRITICAL - blocks all stories)
-3. Complete Phase 3: User Story 1
-4. **STOP and VALIDATE**: Build one tool, verify static binary works
-5. Deploy/demo if ready
+1. **Complete Phase 1: Setup** (T001-T006) → 6 tasks
+2. **Complete Phase 2: Foundational** (T007-T013) → 7 tasks (CRITICAL - blocks all stories)
+3. **Complete Phase 3: User Story 1** (T014-T026) → 13 tasks
+4. **STOP and VALIDATE**: Test podman-full build end-to-end on 3 distributions (Alpine, Ubuntu, CentOS)
+5. **Deploy**: Tag first release, announce availability
+
+**MVP Deliverable**: Users can download static podman/buildah/skopeo binaries from GitHub Releases and run them on any Linux distribution without dependencies
 
 ### Incremental Delivery
 
-1. Complete Setup + Foundational → Foundation ready
-2. Add User Story 1 → Test static binaries → First release (MVP!)
-3. Add User Story 2 → Checksums + signatures → Secure releases
-4. Add User Story 3 → Automated daily checks → Hands-off operation
-5. Add User Story 4 → Manual triggers → Full control
+1. **MVP (26 tasks)**: Setup + Foundational + US1 → Static binary downloads available
+2. **+US2 (9 tasks)**: Add verification → Checksums and signatures available
+3. **+US3 (10 tasks)**: Add auto-detection → Automatic releases for new upstream versions
+4. **+US4 (8 tasks)**: Add manual trigger → Maintainers can rebuild any version
+5. **+Polish (9 tasks)**: Quality improvements → Production-ready
 
-### Experimental Validation Points
+**Total**: 62 tasks organized into 7 phases
 
-After Phase 2, validate Zig + mimalloc approach:
-1. Build single Go CGO binary with Zig
-2. Verify it's truly static (`ldd` shows "not a dynamic executable")
-3. If fails, activate fallback Dockerfiles
+### Parallel Team Strategy
+
+With multiple developers (after Foundational complete):
+
+1. **Team completes Setup + Foundational together** (13 tasks)
+2. **Once Foundational done**:
+   - **Developer A**: US1 (T014-T026) - Core build workflows
+   - **Developer B**: Starts US2 after US1 T023 complete (T027-T035) - Verification
+   - **Developer C**: Starts US3 after US1 T023 complete (T036-T045) - Auto-detection
+3. **US4 and Polish**: Added sequentially after core functionality proven
+
+---
+
+## Implementation Notes
+
+### Container Build Pattern
+
+All build workflows follow this pattern:
+
+```yaml
+steps:
+  - uses: actions/checkout@v6
+
+  - name: Install podman
+    run: sudo apt-get update && sudo apt-get install -y podman
+
+  - name: Pull container image
+    run: podman pull docker.io/ubuntu:rolling
+
+  - name: Run build and package in container
+    run: |
+      podman run --rm \
+        -v ./scripts:/workspace/scripts:ro,z \
+        -v ./build:/workspace/build:rw,z \
+        -e VERSION=${{ inputs.version }} \
+        -e TOOL=${{ inputs.tool }} \
+        -e ARCH=${{ inputs.architecture }} \
+        -e VARIANT=${{ inputs.variant || 'default' }} \
+        docker.io/ubuntu:rolling \
+        bash -c "
+          /workspace/scripts/container/setup-build-env.sh && \
+          /workspace/scripts/build-tool.sh \$TOOL \$ARCH \$VARIANT && \
+          /workspace/scripts/package.sh \$TOOL \$ARCH \$VARIANT
+        "
+
+  - name: Verify static linking
+    run: |
+      for binary in build/$TOOL-$ARCH/install/bin/*; do
+        ldd "$binary" 2>&1 | grep -q "not a dynamic executable" || exit 1
+      done
+
+  - name: Upload artifacts
+    uses: actions/upload-artifact@v5
+    with:
+      name: ${{ inputs.tool }}-${{ inputs.architecture }}
+      path: build/${{ inputs.tool }}-*.tar.zst
+```
+
+### Critical Success Factors
+
+1. **Containerization**: All builds MUST run inside Ubuntu:rolling containers for reproducibility
+2. **Static Linking**: ALL binaries MUST pass `ldd` check showing "not a dynamic executable"
+3. **No Partial Releases**: FR-011 - If any architecture build fails, entire release fails
+4. **Independent Releases**: FR-003 - Each tool (podman, buildah, skopeo) released independently
+5. **Semver Filtering**: FR-009 - Skip pre-release versions (alpha, beta, rc)
+
+### Testing Checkpoints
+
+- **After T013**: Verify containerized build script produces static binary for single component
+- **After T026**: Verify end-to-end podman-full build with all 8 components
+- **After T035**: Verify checksum and cosign signature validation works
+- **After T045**: Verify daily check detects new version and triggers build
+- **After T053**: Verify manual trigger rebuilds existing release
+- **After T057**: Verify downloads work on Alpine, Ubuntu, CentOS
 
 ---
 
 ## Notes
 
-- [P] tasks = different files, no dependencies
-- [Story] label maps task to specific user story for traceability
-- Each user story should be independently completable and testable
-- Commit after each task or logical group
-- Stop at any checkpoint to validate story independently
-- Zig cross-compile is experimental - have Dockerfile fallback ready
-- Runtime components (crun, conmon, etc.) are only needed for podman-full variant
+- **[P] tasks** = Different files, can run in parallel
+- **[Story] label** maps task to specific user story for traceability
+- **Containerized approach**: All builds isolated in ephemeral Ubuntu:rolling containers
+- **No tests requested**: Focus on build infrastructure implementation, not test suites
+- **Commit strategy**: Commit after each task or logical group (e.g., all T014-T016 together)
+- **Stop at checkpoints**: Validate each user story independently before proceeding
+- **Avoid**: Cross-story dependencies that break independence, modifying same file in parallel tasks

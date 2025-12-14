@@ -1,66 +1,133 @@
-# Makefile for rootless-static-toolkits
-# Build static container tools: podman, buildah, skopeo
+# Makefile for Static Container Tools Build System
+# Containerized builds using podman + ubuntu:rolling
 
-.PHONY: help build test clean install-deps
+SHELL := /bin/bash
+.SHELLFLAGS := -o pipefail -c
 
-# Tools
-TOOLS := podman buildah skopeo
-ARCHES := amd64 arm64
+# Default configuration
+CONTAINER_IMAGE := docker.io/ubuntu:rolling
+ARCH := amd64
+VERSION ?= latest
 
-# Default target
-help:
-	@echo "Available targets:"
-	@echo "  build           - Build all tools for all architectures"
-	@echo "  build-<tool>    - Build specific tool (podman, buildah, skopeo)"
-	@echo "  test            - Run smoke tests on built binaries"
-	@echo "  clean           - Remove build artifacts"
-	@echo "  install-deps    - Install build dependencies (Zig, Go, cosign)"
+# Directories
+REPO_ROOT := $(shell pwd)
+SCRIPTS_DIR := $(REPO_ROOT)/scripts
+BUILD_DIR := $(REPO_ROOT)/build
+
+# Volume mount options for SELinux compatibility
+MOUNT_SCRIPTS := -v $(SCRIPTS_DIR):/workspace/scripts:ro,z
+MOUNT_BUILD := -v $(BUILD_DIR):/workspace/build:rw,z
+
+# Container runtime
+PODMAN := podman
+
+.PHONY: help
+help: ## Show this help message
+	@echo "Static Container Tools Build System"
 	@echo ""
-	@echo "Examples:"
-	@echo "  make build-podman"
-	@echo "  make test"
+	@echo "Available targets:"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
 
-# Build all tools
-build:
-	@for tool in $(TOOLS); do \
-		$(MAKE) build-$$tool; \
-	done
+.PHONY: pull-image
+pull-image: ## Pull the build container image
+	$(PODMAN) pull $(CONTAINER_IMAGE)
 
-# Build specific tool
-build-podman:
-	@echo "Building podman..."
-	@./scripts/build-tool.sh podman
+.PHONY: build-podman
+build-podman: pull-image ## Build podman (full variant by default)
+	@echo "Building podman for $(ARCH)..."
+	$(PODMAN) run --rm \
+		$(MOUNT_SCRIPTS) \
+		$(MOUNT_BUILD) \
+		-e VERSION=$(VERSION) \
+		-e TOOL=podman \
+		-e ARCH=$(ARCH) \
+		-e VARIANT=full \
+		$(CONTAINER_IMAGE) \
+		bash -c " \
+			/workspace/scripts/container/setup-build-env.sh && \
+			/workspace/scripts/build-tool.sh podman $(ARCH) full && \
+			/workspace/scripts/package.sh podman $(ARCH) full \
+		"
 
-build-buildah:
-	@echo "Building buildah..."
-	@./scripts/build-tool.sh buildah
+.PHONY: build-podman-minimal
+build-podman-minimal: pull-image ## Build podman (minimal variant)
+	@echo "Building podman-minimal for $(ARCH)..."
+	$(PODMAN) run --rm \
+		$(MOUNT_SCRIPTS) \
+		$(MOUNT_BUILD) \
+		-e VERSION=$(VERSION) \
+		-e TOOL=podman \
+		-e ARCH=$(ARCH) \
+		-e VARIANT=minimal \
+		$(CONTAINER_IMAGE) \
+		bash -c " \
+			/workspace/scripts/container/setup-build-env.sh && \
+			/workspace/scripts/build-tool.sh podman $(ARCH) minimal && \
+			/workspace/scripts/package.sh podman $(ARCH) minimal \
+		"
 
-build-skopeo:
-	@echo "Building skopeo..."
-	@./scripts/build-tool.sh skopeo
+.PHONY: build-buildah
+build-buildah: pull-image ## Build buildah
+	@echo "Building buildah for $(ARCH)..."
+	$(PODMAN) run --rm \
+		$(MOUNT_SCRIPTS) \
+		$(MOUNT_BUILD) \
+		-e VERSION=$(VERSION) \
+		-e TOOL=buildah \
+		-e ARCH=$(ARCH) \
+		$(CONTAINER_IMAGE) \
+		bash -c " \
+			/workspace/scripts/container/setup-build-env.sh && \
+			/workspace/scripts/build-tool.sh buildah $(ARCH) && \
+			/workspace/scripts/package.sh buildah $(ARCH) \
+		"
 
-# Run smoke tests
-test:
-	@echo "Running smoke tests..."
-	@./scripts/test-static.sh
+.PHONY: build-skopeo
+build-skopeo: pull-image ## Build skopeo
+	@echo "Building skopeo for $(ARCH)..."
+	$(PODMAN) run --rm \
+		$(MOUNT_SCRIPTS) \
+		$(MOUNT_BUILD) \
+		-e VERSION=$(VERSION) \
+		-e TOOL=skopeo \
+		-e ARCH=$(ARCH) \
+		$(CONTAINER_IMAGE) \
+		bash -c " \
+			/workspace/scripts/container/setup-build-env.sh && \
+			/workspace/scripts/build-tool.sh skopeo $(ARCH) && \
+			/workspace/scripts/package.sh skopeo $(ARCH) \
+		"
 
-# Clean build artifacts
-clean:
+.PHONY: build-all
+build-all: build-podman build-buildah build-skopeo ## Build all tools (podman-full, buildah, skopeo)
+
+.PHONY: test
+test: ## Run static linking verification tests
+	@echo "Running static linking tests..."
+	@if [ -d "$(BUILD_DIR)/podman-$(ARCH)/install/bin" ]; then \
+		$(SCRIPTS_DIR)/test-static.sh $(BUILD_DIR)/podman-$(ARCH)/install; \
+	else \
+		echo "No binaries found. Run 'make build-podman' first."; \
+		exit 1; \
+	fi
+
+.PHONY: clean
+clean: ## Clean build artifacts
 	@echo "Cleaning build artifacts..."
-	@rm -rf build/mimalloc/build
-	@rm -rf build/*-*/
-	@rm -f *.tar.zst
-	@rm -f *.sig
-	@rm -f checksums.txt
+	rm -rf $(BUILD_DIR)/*-*/
+	rm -f $(BUILD_DIR)/*.tar.zst
+	rm -f $(BUILD_DIR)/checksums.txt
+	rm -f $(BUILD_DIR)/*.sig
 
-# Install build dependencies
-install-deps:
-	@echo "Installing build dependencies..."
-	@echo "Note: This requires sudo for system package installation"
-	@command -v zig >/dev/null 2>&1 || { echo "Installing Zig..."; curl -L https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz | tar -xJ -C /tmp && sudo mv /tmp/zig-linux-x86_64-0.11.0 /usr/local/zig && sudo ln -sf /usr/local/zig/zig /usr/local/bin/zig; }
-	@command -v go >/dev/null 2>&1 || { echo "Installing Go..."; curl -L https://go.dev/dl/go1.21.5.linux-amd64.tar.gz | sudo tar -xz -C /usr/local; }
-	@command -v cosign >/dev/null 2>&1 || { echo "Installing cosign..."; curl -L https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 -o /tmp/cosign && sudo install /tmp/cosign /usr/local/bin/cosign; }
-	@command -v cmake >/dev/null 2>&1 || { echo "Please install cmake: sudo apt install cmake / brew install cmake"; }
-	@command -v ninja >/dev/null 2>&1 || { echo "Please install ninja: sudo apt install ninja-build / brew install ninja"; }
-	@command -v gh >/dev/null 2>&1 || { echo "Please install gh CLI manually: https://cli.github.com/"; }
-	@echo "Dependencies installed. Please ensure cmake, ninja, and 'gh' CLI are available."
+.PHONY: clean-all
+clean-all: clean ## Clean all build artifacts including mimalloc
+	@echo "Cleaning all build artifacts including dependencies..."
+	rm -rf $(BUILD_DIR)/mimalloc/build/
+
+.PHONY: shell
+shell: pull-image ## Start an interactive shell in the build container
+	$(PODMAN) run --rm -it \
+		$(MOUNT_SCRIPTS) \
+		$(MOUNT_BUILD) \
+		$(CONTAINER_IMAGE) \
+		bash

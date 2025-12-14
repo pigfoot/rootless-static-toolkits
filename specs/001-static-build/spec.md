@@ -73,7 +73,7 @@ As a project maintainer, I want to manually trigger a build for a specific tool 
 
 - What happens when upstream releases a pre-release/rc version? System MUST skip pre-release versions and only build stable releases.
 - What happens when the build fails for one architecture but succeeds for another? System MUST fail the entire release and not publish partial artifacts.
-- What happens when GitHub API rate limit is exceeded during version check? System MUST retry with exponential backoff or fail gracefully with notification.
+- What happens when GitHub API rate limit is exceeded during version check? System MUST retry with exponential backoff (3 attempts with delays: 1s, 2s, 4s) and fallback to tags API if releases API continues to fail, or fail gracefully with notification if all retries exhausted.
 - What happens when cosign signing fails? System MUST fail the release and not publish unsigned artifacts.
 
 ## Requirements *(mandatory)*
@@ -125,6 +125,8 @@ As a project maintainer, I want to manually trigger a build for a specific tool 
 - GitHub Actions has sufficient runner time for multi-architecture builds
 - Sigstore/cosign keyless signing remains available and free for open source projects
 - Critical runtime components (libseccomp, libfuse) are built from source for reproducibility and compatibility (see [MIGRATION-ZIG-TO-CLANG.md](./MIGRATION-ZIG-TO-CLANG.md))
+
+**Note on MIGRATION-ZIG-TO-CLANG.md**: This document should cover: (1) Zig compatibility issues encountered (pasta `__cpu_model` symbol, fuse-overlayfs meson detection failures), (2) Clang migration solution with musl target, (3) Build time impact analysis (+1-2 minutes for container setup), (4) Verification that all 8/8 components build successfully with Clang, (5) Containerization benefits (reproducibility, isolation)
 
 ## Success Criteria *(mandatory)*
 

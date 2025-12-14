@@ -89,17 +89,13 @@ echo ""
 
 # Download systemd files from podman source (for systemd integration)
 if [[ "$TOOL" == "podman" ]]; then
-  echo "Downloading systemd integration files..."
-  SYSTEMD_CACHE="$PROJECT_ROOT/build/systemd-files"
-  mkdir -p "$SYSTEMD_CACHE"
-
-  # Use version to download corresponding systemd files
-  PODMAN_SRC_URL="https://github.com/containers/podman/archive/${VERSION}.tar.gz"
-  PODMAN_SRC_DIR="$SYSTEMD_CACHE/podman-${VERSION#v}"
+  echo "Getting systemd integration files from source..."
+  # Use the already-cloned source directory from build-tool.sh
+  PODMAN_SRC_DIR="$BUILD_DIR/src/podman"
 
   if [[ ! -d "$PODMAN_SRC_DIR" ]]; then
-    echo "Fetching podman source for systemd files..."
-    curl -fsSL "$PODMAN_SRC_URL" | tar -xz -C "$SYSTEMD_CACHE"
+    echo "Error: Podman source not found at $PODMAN_SRC_DIR"
+    exit 1
   fi
 
   if [[ -d "$PODMAN_SRC_DIR/contrib/systemd" ]]; then
