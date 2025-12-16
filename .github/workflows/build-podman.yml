@@ -5,9 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Podman version to build (e.g., v5.3.1)'
-        required: true
+        description: 'Podman version to build (leave empty for latest from GitHub)'
+        required: false
         type: string
+        default: ''
       architecture:
         description: 'Target architecture'
         required: false
@@ -233,7 +234,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           echo "Testing podman binary on native ${{ matrix.arch }} runner..."
-          ./build/podman-$ARCH/install/bin/podman version
+          ./build/podman-$ARCH/install/bin/podman --version
           echo "✓ podman binary works correctly"
 
       - name: Set tarball name

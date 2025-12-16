@@ -5,9 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Skopeo version to build (e.g., v1.14.0)'
-        required: true
+        description: 'Skopeo version to build (leave empty for latest from GitHub)'
+        required: false
         type: string
+        default: ''
       architecture:
         description: 'Target architecture'
         required: false

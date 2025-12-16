@@ -69,7 +69,7 @@ fi
 
 # Get latest LLVM release version
 # Use GITHUB_TOKEN if available to avoid rate limiting
-if [[ -n "$GITHUB_TOKEN" ]]; then
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   LLVM_TAG=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
       https://api.github.com/repos/llvm/llvm-project/releases/latest | \
       sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p')

@@ -143,8 +143,8 @@ UPSTREAM_REPO="containers/$TOOL"
 if [[ -z "${VERSION:-}" ]]; then
   echo "Fetching latest $TOOL version from GitHub API..."
   # Use GitHub API with authentication if available to avoid rate limiting
-  if [[ -n "$GITHUB_TOKEN" ]]; then
-    VERSION=$(curl -sk -H "Authorization: Bearer $GITHUB_TOKEN" \
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    VERSION=$(curl -sk -H "Authorization: Bearer ${GITHUB_TOKEN}" \
       "https://api.github.com/repos/${UPSTREAM_REPO}/releases" \
       | sed -En '/"tag_name"/ s#.*"([^"]+)".*#\1#p' \
       | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
@@ -159,8 +159,8 @@ if [[ -z "${VERSION:-}" ]]; then
   if [[ -z "$VERSION" ]]; then
     echo "⚠ Warning: Could not fetch version from releases, trying tags..."
     # Fallback: try tags endpoint
-    if [[ -n "$GITHUB_TOKEN" ]]; then
-      VERSION=$(curl -sk -H "Authorization: Bearer $GITHUB_TOKEN" \
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+      VERSION=$(curl -sk -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         "https://api.github.com/repos/${UPSTREAM_REPO}/tags" \
         | sed -En '/"name"/ s#.*"([^"]+)".*#\1#p' \
         | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
@@ -257,14 +257,130 @@ export RANLIB="ranlib"
 export CGO_ENABLED=1
 export GOOS=linux
 export GOARCH="$GOARCH"
-export CGO_CFLAGS="-I$MIMALLOC_DIR/include"
+
+# Point clang to use musl instead of glibc (architecture-aware)
+# CRITICAL: Prevents SIGFPE errors during podman build (glibc NSS incompatibility)
+if [[ "$ARCH" == "amd64" ]]; then
+    MUSL_ARCH="x86_64-linux-musl"
+elif [[ "$ARCH" == "arm64" ]]; then
+    MUSL_ARCH="aarch64-linux-musl"
+fi
+
+# Combine musl and mimalloc flags
+# -w disables warnings to avoid musl header issues
+export CGO_CFLAGS="-I/usr/include/${MUSL_ARCH} -I$MIMALLOC_DIR/include -w"
+export CGO_LDFLAGS="-L/usr/lib/${MUSL_ARCH} -static"
 # NOTE: mimalloc linking moved to -extldflags to avoid duplication
-export CGO_LDFLAGS=""
+
+# Build libseccomp from source (required for podman and buildah)
+# Reason: podman and buildah use github.com/seccomp/libseccomp-golang bindings
+# MUST build before main tool to ensure CGO finds libseccomp during compilation
+if [[ "$TOOL" == "podman" || "$TOOL" == "buildah" ]]; then
+  echo "========================================"
+  echo "Building libseccomp (dependency for $TOOL)"
+  echo "========================================"
+
+  # Get latest libseccomp version from GitHub API (consistent with other components)
+  echo "Fetching latest libseccomp version from GitHub API..."
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    LIBSECCOMP_VERSION=$(curl -sk -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+      "https://api.github.com/repos/seccomp/libseccomp/releases" \
+      | sed -En '/\"tag_name\"/ s#.*\"([^\"]+)\".*#\1#p' \
+      | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+      | head -1)
+  else
+    LIBSECCOMP_VERSION=$(curl -sk "https://api.github.com/repos/seccomp/libseccomp/releases" \
+      | sed -En '/\"tag_name\"/ s#.*\"([^\"]+)\".*#\1#p' \
+      | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+      | head -1)
+  fi
+
+  if [[ -z "$LIBSECCOMP_VERSION" ]]; then
+    echo "Error: Could not fetch libseccomp version from GitHub API" >&2
+    exit 1
+  fi
+
+  echo "Using libseccomp version: $LIBSECCOMP_VERSION"
+
+  LIBSECCOMP_SRC="$SRC_DIR/libseccomp"
+  LIBSECCOMP_INSTALL="$BUILD_DIR/libseccomp-install"
+
+  if [[ ! -d "$LIBSECCOMP_SRC" ]]; then
+    echo "Cloning libseccomp $LIBSECCOMP_VERSION..."
+    git clone --depth 1 --branch "$LIBSECCOMP_VERSION" \
+      https://github.com/seccomp/libseccomp "$LIBSECCOMP_SRC" || {
+      echo "⚠ Warning: Failed to clone libseccomp, $TOOL build may fail..."
+    }
+  else
+    echo "Updating existing libseccomp source..."
+    cd "$LIBSECCOMP_SRC"
+    git fetch --tags
+    git checkout "$LIBSECCOMP_VERSION"
+  fi
+
+  if [[ -d "$LIBSECCOMP_SRC" ]]; then
+    cd "$LIBSECCOMP_SRC"
+
+    # Clean previous build
+    make distclean 2>/dev/null || true
+
+    # Generate configure script
+    if [[ ! -f configure ]]; then
+      ./autogen.sh || {
+        echo "⚠ Warning: autogen.sh failed for libseccomp"
+      }
+    fi
+
+    # Configure for static build
+    ./configure \
+      --prefix="$LIBSECCOMP_INSTALL" \
+      --enable-static \
+      --disable-shared \
+      CC="clang" \
+      CFLAGS="-O2 -fPIC" || {
+      echo "⚠ Warning: configure failed for libseccomp"
+    }
+
+    # Build and install
+    make -j$(nproc) || {
+      echo "⚠ Warning: make failed for libseccomp"
+    }
+
+    make install || {
+      echo "⚠ Warning: make install failed for libseccomp"
+    }
+
+    if [[ -f "$LIBSECCOMP_INSTALL/lib/libseccomp.a" ]]; then
+      echo "✓ libseccomp built successfully"
+      # Export PKG_CONFIG_PATH so pkg-config can find it
+      export PKG_CONFIG_PATH="$LIBSECCOMP_INSTALL/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+      # Export CPPFLAGS and LDFLAGS so configure scripts can find headers and libs directly
+      export CPPFLAGS="-I$LIBSECCOMP_INSTALL/include${CPPFLAGS:+ $CPPFLAGS}"
+      export LDFLAGS="-L$LIBSECCOMP_INSTALL/lib${LDFLAGS:+ $LDFLAGS}"
+      # Export CGO flags so Go can find libseccomp during podman/buildah build
+      export CGO_CFLAGS="$CGO_CFLAGS -I$LIBSECCOMP_INSTALL/include"
+      export CGO_LDFLAGS="$CGO_LDFLAGS -L$LIBSECCOMP_INSTALL/lib"
+      echo "  PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
+      echo "  CPPFLAGS=$CPPFLAGS"
+      echo "  LDFLAGS=$LDFLAGS"
+      echo "  CGO_CFLAGS=$CGO_CFLAGS"
+      echo "  CGO_LDFLAGS=$CGO_LDFLAGS"
+    else
+      echo "⚠ Warning: libseccomp.a not found, $TOOL build may fail"
+    fi
+
+    # Return to tool source directory
+    cd "$SRC_DIR/$TOOL"
+  fi
+fi
 
 # Build tags for static linking
-BUILD_TAGS="containers_image_openpgp exclude_graphdriver_btrfs exclude_graphdriver_devicemapper"
+# seccomp: Enable seccomp support (requires libseccomp, built above)
+BUILD_TAGS="containers_image_openpgp exclude_graphdriver_btrfs exclude_graphdriver_devicemapper seccomp"
 
+echo "========================================"
 echo "Building $TOOL binary..."
+echo "========================================"
 # Use --whole-archive in extldflags to force mimalloc's malloc to override musl malloc
 # This ensures mimalloc is only linked once (not repeated for each CGO package)
 # Build extldflags with expanded variables
@@ -363,24 +479,52 @@ if [[ "$VARIANT" != "standalone" ]]; then
   echo "Components to build: ${COMPONENTS_TO_BUILD[*]:-none}"
   echo ""
 
-  # Build libseccomp from source (required for crun)
-  # Reason: Ensures compatibility with Ubuntu 24.04 and musl libc static linking
-  # Only build if crun is in the components list
-  if [[ " ${COMPONENTS_TO_BUILD[*]} " =~ " crun " ]]; then
+  # Note: libseccomp may already be built if TOOL is podman/buildah
+  # If not (e.g., TOOL=skopeo but building crun), build it now for crun
+  # Only build if crun is in the components list AND libseccomp not yet built
+  if [[ " ${COMPONENTS_TO_BUILD[*]} " =~ " crun " ]] && [[ ! -f "$BUILD_DIR/libseccomp-install/lib/libseccomp.a" ]]; then
     echo "----------------------------------------"
     echo "Building: libseccomp (dependency for crun)"
     echo "----------------------------------------"
 
-    LIBSECCOMP_VERSION="v2.5.5"
+    # Get libseccomp version (reuse if already set by podman/buildah build above)
+    if [[ -z "${LIBSECCOMP_VERSION:-}" ]]; then
+      echo "Fetching latest libseccomp version from GitHub API..."
+      if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        LIBSECCOMP_VERSION=$(curl -sk -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+          "https://api.github.com/repos/seccomp/libseccomp/releases" \
+          | sed -En '/\"tag_name\"/ s#.*\"([^\"]+)\".*#\1#p' \
+          | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+          | head -1)
+      else
+        LIBSECCOMP_VERSION=$(curl -sk "https://api.github.com/repos/seccomp/libseccomp/releases" \
+          | sed -En '/\"tag_name\"/ s#.*\"([^\"]+)\".*#\1#p' \
+          | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+          | head -1)
+      fi
+
+      if [[ -z "$LIBSECCOMP_VERSION" ]]; then
+        echo "Error: Could not fetch libseccomp version from GitHub API" >&2
+        exit 1
+      fi
+    fi
+
+    echo "Using libseccomp version: $LIBSECCOMP_VERSION"
+
     LIBSECCOMP_SRC="$SRC_DIR/libseccomp"
     LIBSECCOMP_INSTALL="$BUILD_DIR/libseccomp-install"
 
   if [[ ! -d "$LIBSECCOMP_SRC" ]]; then
-    echo "Fetching libseccomp $LIBSECCOMP_VERSION..."
+    echo "Cloning libseccomp $LIBSECCOMP_VERSION..."
     git clone --depth 1 --branch "$LIBSECCOMP_VERSION" \
       https://github.com/seccomp/libseccomp "$LIBSECCOMP_SRC" || {
       echo "⚠ Warning: Failed to clone libseccomp, crun may fail..."
     }
+  else
+    echo "Updating existing libseccomp source..."
+    cd "$LIBSECCOMP_SRC"
+    git fetch --tags
+    git checkout "$LIBSECCOMP_VERSION"
   fi
 
   if [[ -d "$LIBSECCOMP_SRC" ]]; then
@@ -470,8 +614,8 @@ if [[ "$VARIANT" != "standalone" ]]; then
       # GitHub repos: use API to get latest stable release tag
       # Use authentication if available to avoid rate limiting
       echo "Fetching version from GitHub API..."
-      if [[ -n "$GITHUB_TOKEN" ]]; then
-        COMP_VERSION=$(curl -sk -H "Authorization: Bearer $GITHUB_TOKEN" \
+      if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        COMP_VERSION=$(curl -sk -H "Authorization: Bearer ${GITHUB_TOKEN}" \
           "https://api.github.com/repos/${COMP_REPO}/releases" \
           | sed -En '/"tag_name"/ s#.*"([^"]+)".*#\1#p' \
           | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
@@ -486,8 +630,8 @@ if [[ "$VARIANT" != "standalone" ]]; then
       if [[ -z "$COMP_VERSION" ]]; then
         echo "⚠ Warning: Could not fetch version for $component from releases, trying tags..."
         # Fallback: try tags endpoint
-        if [[ -n "$GITHUB_TOKEN" ]]; then
-          COMP_VERSION=$(curl -sk -H "Authorization: Bearer $GITHUB_TOKEN" \
+        if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+          COMP_VERSION=$(curl -sk -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             "https://api.github.com/repos/${COMP_REPO}/tags" \
             | sed -En '/"name"/ s#.*"([^"]+)".*#\1#p' \
             | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \

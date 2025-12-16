@@ -162,6 +162,12 @@ podman run --rm \
 - **Dependencies**: Go 1.21+ (installed via apt-get in container)
 - **CGO**: Enabled with Clang cross-compiler
 - **Static Linking**: `-ldflags "-linkmode external -extldflags '-static'"`
+- **libseccomp dependency**:
+  - **podman**: Requires libseccomp (via `github.com/seccomp/libseccomp-golang`)
+  - **buildah**: Requires libseccomp (via `github.com/seccomp/libseccomp-golang`)
+  - **skopeo**: No seccomp dependency (only does image operations, doesn't run containers)
+  - **Build order**: libseccomp MUST be built before podman/buildah compilation
+  - **Implementation**: Build libseccomp from source (v2.5.5) before main tool build
 
 ### Rust Components (netavark, aardvark-dns)
 - **Build System**: Cargo

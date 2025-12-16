@@ -5,9 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Buildah version to build (e.g., v1.35.0)'
-        required: true
+        description: 'Buildah version to build (leave empty for latest from GitHub)'
+        required: false
         type: string
+        default: ''
       architecture:
         description: 'Target architecture'
         required: false
@@ -209,7 +210,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           echo "Testing buildah binary on native ${{ matrix.arch }} runner..."
-          ./build/buildah-$ARCH/install/bin/buildah version
+          ./build/buildah-$ARCH/install/bin/buildah --version
           echo "✓ buildah binary works correctly"
 
       - name: Set tarball name
