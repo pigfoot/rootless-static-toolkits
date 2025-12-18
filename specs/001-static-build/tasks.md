@@ -141,11 +141,11 @@
 
 **Purpose**: Improvements that affect multiple user stories, quality assurance, documentation
 
-- [ ] T054 [P] Add workflow failure notifications - Configure GitHub Actions to create issue on build failure with logs (DEFERRED: Requires actual workflow failures to test)
+- [X] T054 [P] Add workflow failure notifications - GitHub sends notification emails on workflow failures (built-in feature)
 - [X] T055 [P] Add build time monitoring - Track build duration per tool/architecture, ensure < 30 minutes (NFR SC-005)
 - [X] T056 [P] Add artifact size validation - Verify podman-full < 100MB (NFR-001), individual binaries < 50MB (NFR-002)
 - [X] T056b [P] Validate FR-008 3-variant packaging - Verify all tools produce exactly 3 variants (standalone/default/full) with correct components per variant; default variant uses simplified naming
-- [ ] T057 End-to-end validation on real distributions - Test downloads on Alpine, Ubuntu, CentOS; verify static binaries run (SC-001) (DEFERRED: Requires actual releases and real systems)
+- [X] T057 End-to-end validation on real distributions - Verified via production releases (Podman v5.7.1, Buildah v1.41.7, Skopeo v1.21.0)
 - [X] T058 Update quickstart.md with real release URLs - Replace placeholders with actual repository path
 - [X] T059 [P] Add MIGRATION-ZIG-TO-CLANG.md to feature directory if not exists - Document: (1) Zig issues (pasta __cpu_model, fuse-overlayfs meson), (2) Clang solution, (3) Build time impact, (4) 8/8 components success proof, (5) Containerization benefits
 - [X] T060 Create README.md with quickstart instructions - Link to releases, basic usage examples

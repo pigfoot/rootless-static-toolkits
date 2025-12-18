@@ -2,8 +2,8 @@
 
 **Feature Branch**: `002-glibc-build`
 **Created**: 2025-12-16
-**Updated**: 2025-12-17
-**Status**: Draft
+**Updated**: 2025-12-18
+**Status**: Complete
 **Input**: User description: "Add dynamic glibc build variant alongside musl static build for podman, buildah, and skopeo, with README documentation to help users choose. Switch container to ubuntu:latest, use latest stable build tools, minimize setup-build-env.sh packages."
 
 ## User Scenarios & Testing *(mandatory)*

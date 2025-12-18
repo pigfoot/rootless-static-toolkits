@@ -1,14 +1,18 @@
 #!/bin/bash
 # Wrapper script to launch podman container with volume mounts and environment variables
 # This script runs on the host (GitHub Actions runner or local machine)
+# Usage: ./scripts/container/run-build.sh <tool> [arch] [variant] [libc]
+# Example: ./scripts/container/run-build.sh podman amd64 default static
+#          ./scripts/container/run-build.sh buildah arm64 full glibc
 
 set -euo pipefail
 
 # Configuration
-CONTAINER_IMAGE="${CONTAINER_IMAGE:-docker.io/ubuntu:rolling}"
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-docker.io/ubuntu:latest}"
 TOOL="${1:-podman}"
 ARCH="${2:-amd64}"
-VARIANT="${3:-full}"
+VARIANT="${3:-default}"
+LIBC="${4:-static}"
 VERSION="${VERSION:-latest}"
 
 # Directories
@@ -21,6 +25,7 @@ echo "=== Containerized Build Wrapper ==="
 echo "Tool: ${TOOL}"
 echo "Architecture: ${ARCH}"
 echo "Variant: ${VARIANT}"
+echo "Libc: ${LIBC}"
 echo "Version: ${VERSION}"
 echo "Container Image: ${CONTAINER_IMAGE}"
 echo ""
@@ -49,6 +54,7 @@ podman run --rm \
     -e TOOL="${TOOL}" \
     -e ARCH="${ARCH}" \
     -e VARIANT="${VARIANT}" \
+    -e LIBC="${LIBC}" \
     "${CONTAINER_IMAGE}" \
     bash -c "
         set -euo pipefail
@@ -58,11 +64,11 @@ podman run --rm \
 
         echo ''
         echo '=== Building ${TOOL} ==='
-        /workspace/scripts/build-tool.sh ${TOOL} ${ARCH} ${VARIANT}
+        /workspace/scripts/build-tool.sh ${TOOL} ${ARCH} ${VARIANT} ${LIBC}
 
         echo ''
         echo '=== Packaging ${TOOL} ==='
-        /workspace/scripts/package.sh ${TOOL} ${ARCH} ${VARIANT}
+        /workspace/scripts/package.sh ${TOOL} ${ARCH} ${LIBC} ${VARIANT}
 
         echo ''
         echo '=== Build complete ==='
@@ -70,4 +76,8 @@ podman run --rm \
 
 echo ""
 echo "=== Containerized build complete ==="
-echo "Artifacts available in: ${BUILD_DIR}/${TOOL}-${ARCH}/"
+if [[ "$LIBC" == "glibc" ]]; then
+    echo "Artifacts available in: ${BUILD_DIR}/${TOOL}-${ARCH}-glibc/"
+else
+    echo "Artifacts available in: ${BUILD_DIR}/${TOOL}-${ARCH}/"
+fi

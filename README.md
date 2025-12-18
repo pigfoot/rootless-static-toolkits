@@ -211,10 +211,30 @@ All tools provide three package variants to suit different use cases:
 ### ⚠️ Compatibility Warnings
 
 - **standalone variants** require compatible system packages:
-  - runc or crun ≥ v1.1.11
+  - crun ≥ 1.25.1 (Ubuntu 24.04 has 1.14.1 - **too old**)
   - Latest conmon version
-  - Most Ubuntu versions have **outdated** runc/conmon that will fail
+  - pasta (for rootless networking)
 - **default and full variants** include all required runtimes - work on **any** Linux distribution
+
+### Comparison with Other Static Podman Projects
+
+| Feature | pigfoot | mgoltzsche/podman-static |
+|---------|---------|--------------------------|
+| Podman version | 5.7.1 | 5.7.1 |
+| crun version | 1.25.1 | bundled |
+| pasta version | 5.7.1 | 2025_12_10 |
+| SSL/TLS (bun install) | ✅ Works | ❌ Certificate errors |
+| Libc variants | static + glibc | static only |
+
+**Note:** mgoltzsche's pasta build has known SSL issues affecting some applications. See [Networking Research](docs/podman-rootless-networking-research.md) for detailed test results.
+
+### Variant Selection by Scenario
+
+| Scenario | Recommended Variant | Reason |
+|----------|---------------------|--------|
+| GitHub Actions (Ubuntu 24.04) | **default** | Ubuntu has pasta, only needs bundled crun |
+| Clean system / Alpine / Minimal | **full** | No external dependencies |
+| System has crun ≥ 1.25.1 | standalone | Smallest size |
 
 ## Building from Source
 
@@ -224,19 +244,34 @@ All tools provide three package variants to suit different use cases:
 - cosign (optional, for signing)
 - gh CLI (optional, for automated releases)
 
-All builds run inside Ubuntu:rolling containers with:
+All builds run inside Ubuntu:latest containers with:
 - Clang + musl-dev + musl-tools
 - Go 1.21+
 - Rust (for netavark/aardvark-dns)
 - protobuf-compiler
 
-### Containerized Build
+### Local Build
 
 ```bash
-# Build podman default variant for amd64 (runs inside container)
-make build-podman
+# Build podman (default variant, static libc, amd64) - runs inside ubuntu:latest container
+./scripts/container/run-build.sh podman amd64 default static
 
-# Or manually trigger workflow with specific variant
+# Build with different options
+./scripts/container/run-build.sh podman arm64 full static
+./scripts/container/run-build.sh buildah amd64 default glibc
+./scripts/container/run-build.sh skopeo amd64 standalone static
+
+# Or use Makefile shortcuts
+make build-podman                    # default variant, static, amd64
+make build-podman ARCH=arm64         # cross-compile for arm64
+make build-podman VARIANT=full       # full variant with all components
+make build-podman LIBC=glibc         # glibc variant
+```
+
+### Trigger GitHub Actions Build
+
+```bash
+# Trigger workflow with specific options
 gh workflow run build-podman.yml \
   -f version=v5.3.1 \
   -f architecture=amd64 \
@@ -247,31 +282,6 @@ gh workflow run build-podman.yml \
   -f version=v5.3.1 \
   -f architecture=both \
   -f variant=all
-```
-
-### Manual Build
-
-```bash
-# Setup build environment (inside container)
-podman run --rm -it \
-  -v ./scripts:/workspace/scripts:ro,z \
-  -v ./build:/workspace/build:rw,z \
-  docker.io/ubuntu:rolling bash
-
-# Inside container:
-/workspace/scripts/container/setup-build-env.sh
-
-# Build default variant (recommended)
-/workspace/scripts/build-tool.sh podman amd64 default
-/workspace/scripts/package.sh podman v5.3.1 amd64 default
-
-# Or build full variant
-/workspace/scripts/build-tool.sh podman amd64 full
-/workspace/scripts/package.sh podman v5.3.1 amd64 full
-
-# Or build standalone variant (not recommended)
-/workspace/scripts/build-tool.sh podman amd64 standalone
-/workspace/scripts/package.sh podman v5.3.1 amd64 standalone
 ```
 
 ### Local Signing
@@ -285,7 +295,7 @@ podman run --rm -it \
 
 ### Build Strategy
 
-1. **Containerized**: Ubuntu:rolling with Clang + musl-dev for reproducible builds
+1. **Containerized**: Ubuntu:latest with Clang + musl-dev for reproducible builds
 2. **Cross-Compilation**: Clang with `--target=<arch>-linux-musl` for amd64/arm64
 3. **Allocator**: mimalloc (statically linked, 7-10x faster than musl default)
 4. **Dependencies**: All dependencies built from source (libseccomp, libfuse, etc.)

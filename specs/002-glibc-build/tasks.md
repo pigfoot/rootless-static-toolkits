@@ -66,9 +66,9 @@
 
 ---
 
-## Phase 4: User Story 1 - Build glibc-linked Binary (Priority: P1) 🎯 MVP
+## Phase 4: User Story 1 - Build glibc Variant (Priority: P1) 🎯 MVP
 
-**Goal**: Add glibc build mode to build-tool.sh producing hybrid-static binaries
+**Goal**: Add glibc build mode to build-tool.sh producing glibc-dynamic binaries (only glibc dynamically linked)
 
 **Independent Test**: Run glibc build target, verify ldd shows only glibc dependencies
 

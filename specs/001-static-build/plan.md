@@ -5,15 +5,15 @@
 
 ## Summary
 
-Build a fully automated release pipeline for static podman, buildah, and skopeo binaries targeting linux/amd64 and linux/arm64. **All builds execute inside Ubuntu containers (docker.io/ubuntu:rolling) using podman on GitHub Actions runners.** Uses Clang with musl target and mimalloc for optimal static binaries. Each tool is tracked and released independently based on upstream versions, with daily automated checks and manual trigger support.
+Build a fully automated release pipeline for static podman, buildah, and skopeo binaries targeting linux/amd64 and linux/arm64. **All builds execute inside Ubuntu containers (docker.io/ubuntu:latest) using podman on GitHub Actions runners.** Uses Clang with musl target and mimalloc for optimal static binaries. Each tool is tracked and released independently based on upstream versions, with daily automated checks and manual trigger support.
 
 ## Technical Context
 
-**Language/Version**: Bash scripts, YAML (GitHub Actions), Containerized builds (podman + Ubuntu:rolling)
+**Language/Version**: Bash scripts, YAML (GitHub Actions), Containerized builds (podman + ubuntu:latest)
 **Compiler**: Clang 18+ with musl target (installed in container)
 **Libc**: musl (for truly static binaries)
 **Allocator**: mimalloc (static linked, replaces musl's slow allocator)
-**Build Environment**: Ubuntu:rolling container (docker.io/ubuntu:rolling) running on GitHub Actions via podman
+**Build Environment**: ubuntu:latest container (docker.io/ubuntu:latest) running on GitHub Actions via podman
 **Primary Dependencies**:
   - **Runner**: podman (only dependency on runner itself)
   - **Container**: Go toolchain, Clang, musl-dev, musl-tools, protobuf-compiler, Rust/Cargo
@@ -34,9 +34,9 @@ Build a fully automated release pipeline for static podman, buildah, and skopeo 
 
 | Principle | Status | Evidence |
 |-----------|--------|----------|
-| I. Truly Static Binaries | ✅ PASS | Clang + musl target produces static binaries; verified with `ldd`; containerized build ensures clean environment |
+| I. Maximally Static Binaries | ✅ PASS | Clang + musl target produces static binaries; verified with `ldd`; containerized build ensures clean environment |
 | II. Independent Tool Releases | ✅ PASS | Separate workflows per tool; version tracking per tool |
-| III. Reproducible Builds | ✅ PASS | **IMPROVED**: Container-based builds ensure exact same environment; Ubuntu:rolling provides consistent package versions; exact build steps in scripts |
+| III. Reproducible Builds | ✅ PASS | **IMPROVED**: Container-based builds ensure exact same environment; ubuntu:latest provides consistent package versions; exact build steps in scripts |
 | IV. Minimal Dependencies | ✅ PASS | Three variants (standalone/default/full); default has minimum required runtime; full has complete stack; **runner only needs podman** |
 | V. Automated Release Pipeline | ✅ PASS | Daily cron + workflow_dispatch; cosign signing; auto GitHub Release |
 
@@ -87,7 +87,7 @@ Containerfile.build              # Container build environment definition (optio
 Makefile                         # Local build/test commands
 ```
 
-**Structure Decision**: Build infrastructure project with **containerized GitHub Actions workflows** as primary. Podman runs Ubuntu:rolling container on each build; scripts execute inside container; runner only needs podman installed.
+**Structure Decision**: Build infrastructure project with **containerized GitHub Actions workflows** as primary. Podman runs ubuntu:latest container on each build; scripts execute inside container; runner only needs podman installed.
 
 ## Build Workflow Architecture
 
@@ -98,7 +98,7 @@ GitHub Actions Runner (ubuntu-latest)
 │
 ├── Install: podman (via apt-get)
 │
-├── Pull: docker.io/ubuntu:rolling
+├── Pull: docker.io/ubuntu:latest
 │
 ├── Run Container with:
 │   ├── Mount: ./scripts → /workspace/scripts
@@ -138,7 +138,7 @@ podman run --rm \
   -e VERSION=$VERSION \
   -e TOOL=$TOOL \
   -e ARCH=$ARCH \
-  docker.io/ubuntu:rolling \
+  docker.io/ubuntu:latest \
   bash -c "
     /workspace/scripts/container/setup-build-env.sh && \
     /workspace/scripts/build-tool.sh $TOOL $ARCH $VARIANT
@@ -303,7 +303,7 @@ podman-v5.3.1/
 | Technical Choice | Why Needed | Fallback Plan | Status |
 |------------------|------------|---------------|--------|
 | Containerized builds via podman | Reproducibility, clean environment, runner independence | Direct runner execution (previous approach) | **NEW** - Recommended by user |
-| Ubuntu:rolling as build image | Latest stable packages, regular security updates | Pin to Ubuntu 24.04 LTS | **NEW** - User specified |
+| ubuntu:latest as build image | Latest stable packages, regular security updates | Pin to Ubuntu 24.04 LTS | **ACTIVE** |
 | Clang + musl target with explicit CGO paths | **CRITICAL**: glibc NSS incompatible with static linking (causes SIGFPE in `podman build`); musl required for functional static binaries | musl-gcc wrapper (standard approach) | **ACTIVE** - Verified working |
 | mimalloc static link | musl allocator is slow | Accept musl allocator for CLI tools | **ACTIVE** |
 | Cross-compile arm64 on amd64 | Avoid ARM runner cost/complexity | Use ubuntu-24.04-arm native runner | **ACTIVE** |

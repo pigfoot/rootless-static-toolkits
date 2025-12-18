@@ -2,7 +2,8 @@
 
 **Feature Branch**: `001-static-build`
 **Created**: 2025-12-12
-**Status**: Draft
+**Updated**: 2025-12-18
+**Status**: Complete
 **Input**: Build static podman, buildah, and skopeo binaries with automated GitHub Actions release pipeline
 
 ## User Scenarios & Testing *(mandatory)*
@@ -102,12 +103,14 @@ As a project maintainer, I want to manually trigger a build for a specific tool 
 
 ### Package Variants
 
-**Current Build Status (as of 2025-12-15)**: All components successfully building ✅
+**Current Build Status (as of 2025-12-18)**: All components successfully building ✅
 
-**Verified Builds**:
-- [Podman v5.7.1](https://github.com/pigfoot/static-rootless-container-tools/actions/runs/20227166202) - 6/6 builds passed
-- [Buildah v1.41.7](https://github.com/pigfoot/static-rootless-container-tools/actions/runs/20227166540) - 6/6 builds passed
-- [Skopeo v1.21.0](https://github.com/pigfoot/static-rootless-container-tools/actions/runs/20227166967) - 6/6 builds passed
+**Note**: As of 002-glibc-build, the project now supports two libc variants (static/glibc) with updated naming: `{tool}-{version}-linux-{arch}-{libc}[-{variant}].tar.zst`
+
+**Latest Releases**:
+- Podman v5.7.1 - 12 build variants (2 arch × 3 variants × 2 libc)
+- Buildah v1.41.7 - 12 build variants
+- Skopeo v1.21.0 - 12 build variants
 
 ### Directory Structure by Variant
 
@@ -216,11 +219,18 @@ Each variant follows a different directory layout optimized for its use case:
 
 ### Package Naming Convention
 
-**Tarball naming**:
-- **default variant**: `{tool}-linux-{arch}.tar.zst` (simplified name, e.g., `podman-linux-amd64.tar.zst`)
-- **other variants**: `{tool}-{variant}-linux-{arch}.tar.zst` (e.g., `podman-standalone-linux-amd64.tar.zst`, `podman-full-linux-amd64.tar.zst`)
+**Tarball naming** (updated for 002-glibc-build):
+- **Format**: `{tool}-{version}-linux-{arch}-{libc}[-{variant}].tar.zst`
+- **Default variant**: Omits variant suffix (e.g., `podman-v5.7.1-linux-amd64-static.tar.zst`)
+- **Other variants**: Include variant suffix (e.g., `podman-v5.7.1-linux-amd64-static-full.tar.zst`)
 
-**Rationale**: Default variant is the recommended option, so it gets the simplest filename for ease of use.
+**Examples**:
+- `podman-v5.7.1-linux-amd64-static.tar.zst` (default, musl static)
+- `podman-v5.7.1-linux-amd64-glibc.tar.zst` (default, glibc)
+- `podman-v5.7.1-linux-amd64-static-standalone.tar.zst`
+- `podman-v5.7.1-linux-amd64-glibc-full.tar.zst`
+
+**Rationale**: Version and libc variant in filename enables clear identification of binary characteristics.
 
 ### Variant Comparison by Tool
 

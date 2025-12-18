@@ -46,6 +46,9 @@ podman info | grep -q "rootless: true" && echo "✓ Rootless podman ready"
 │   ├── build-skopeo.yml    # Skopeo build workflow
 │   └── check-releases.yml  # Auto version detection
 ├── scripts/                # Build and utility scripts
+│   ├── container/          # Container build scripts
+│   │   ├── run-build.sh    # Wrapper to launch containerized build
+│   │   └── setup-build-env.sh  # Install dependencies inside container
 │   ├── build-tool.sh       # Main build script (Clang + Go)
 │   ├── build-mimalloc.sh   # Build mimalloc allocator
 │   ├── package.sh          # Create release tarballs
@@ -54,7 +57,6 @@ podman info | grep -q "rootless: true" && echo "✓ Rootless podman ready"
 │   └── test-static.sh      # Static binary verification
 ├── build/                  # Build artifacts (gitignored)
 │   └── mimalloc/           # mimalloc source and builds
-├── Containerfile.build     # Optional pre-built image (not used by CI)
 ├── Makefile                # Local build commands
 ├── specs/                  # Design documentation
 │   └── 001-static-build/   # Feature 001 specification
@@ -65,7 +67,23 @@ podman info | grep -q "rootless: true" && echo "✓ Rootless podman ready"
 
 ### 1. Local Development
 
-#### Building a Single Tool
+All builds run inside `ubuntu:latest` containers for reproducibility.
+
+#### Using run-build.sh (Direct)
+
+```bash
+# Usage: ./scripts/container/run-build.sh <tool> [arch] [variant] [libc]
+
+# Build podman (default variant, static libc, amd64) - runs inside ubuntu:latest container
+./scripts/container/run-build.sh podman amd64 default static
+
+# Build with different options
+./scripts/container/run-build.sh podman arm64 full static
+./scripts/container/run-build.sh buildah amd64 default glibc
+./scripts/container/run-build.sh skopeo amd64 standalone static
+```
+
+#### Using Makefile (Shortcuts)
 
 ```bash
 # Build podman for current architecture (amd64)
@@ -212,7 +230,7 @@ Dynamically links only glibc (libc.so.6, libm.so.6, libresolv.so.2), all other d
 |--------|---------|-------|
 | `build-tool.sh` | Build podman/buildah/skopeo | `./scripts/build-tool.sh podman amd64 full` |
 | `build-mimalloc.sh` | Build mimalloc for target arch | `./scripts/build-mimalloc.sh amd64` |
-| `package.sh` | Create .tar.zst release archive | `./scripts/package.sh podman v5.3.1 amd64 full` |
+| `package.sh` | Create .tar.zst release archive | `./scripts/package.sh podman amd64 static full v5.3.1` |
 | `sign-release.sh` | Sign with cosign OIDC | `./scripts/sign-release.sh release/` |
 | `check-version.sh` | Check for new upstream versions | `./scripts/check-version.sh podman` |
 | `test-static.sh` | Verify binaries are static | `./scripts/test-static.sh build/podman-amd64/install` |
@@ -304,7 +322,7 @@ Check that build happens inside container (should auto-install dependencies):
 
 ```bash
 # If building manually, verify CMake and Ninja inside container:
-podman run --rm docker.io/ubuntu:rolling bash -c "cmake --version && ninja --version"
+podman run --rm docker.io/ubuntu:latest bash -c "cmake --version && ninja --version"
 ```
 
 **Go build fails with CGO errors:**
@@ -338,7 +356,7 @@ gh auth login
 
 ### Local vs CI Differences
 
-- **CI uses Ubuntu 22.04 runners** - Test locally with same `docker.io/ubuntu:rolling` container for consistency
+- **CI uses Ubuntu 22.04 runners** - Test locally with same `docker.io/ubuntu:latest` container for consistency
 - **CI uses containerized builds** - All builds happen inside containers, reproducible locally
 - **CI uses cross-compilation for arm64** - Clang cross-compiles arm64 on amd64 runners
 - **CI has OIDC token** - For cosign signing, can't be tested locally (use `--bundle` for local signing)
