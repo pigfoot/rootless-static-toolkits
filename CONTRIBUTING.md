@@ -54,7 +54,7 @@ podman info | grep -q "rootless: true" && echo "✓ Rootless podman ready"
 │   └── test-static.sh      # Static binary verification
 ├── build/                  # Build artifacts (gitignored)
 │   └── mimalloc/           # mimalloc source and builds
-├── Dockerfile.*            # Fallback Alpine-based builds
+├── Containerfile.build     # Optional pre-built image (not used by CI)
 ├── Makefile                # Local build commands
 ├── specs/                  # Design documentation
 │   └── 001-static-build/   # Feature 001 specification
@@ -74,10 +74,17 @@ make build-podman
 # Build for specific architecture
 make build-podman ARCH=arm64
 
-# Build specific variant
+# Build specific libc variant
+make build-podman LIBC=static  # Static variant (musl, default, recommended)
+make build-podman LIBC=glibc   # Glibc variant (requires glibc 2.34+)
+
+# Build specific package variant
 make build-podman VARIANT=standalone  # Binary only
 make build-podman VARIANT=default     # Recommended (binary + crun + conmon)
 make build-podman VARIANT=full        # Complete stack
+
+# Combine options
+make build-podman ARCH=amd64 LIBC=glibc VARIANT=full
 ```
 
 #### Building All Tools
@@ -159,7 +166,13 @@ make test
 
 ### How Static Builds Work
 
-All builds run inside **Ubuntu:rolling containers** using podman for reproducibility.
+All builds run inside **ubuntu:latest containers** using podman for reproducibility.
+
+This project supports two libc variants:
+
+#### Static Variant (musl, default, recommended)
+
+Fully static binaries with zero runtime dependencies. Maximum portability.
 
 1. **mimalloc** is compiled first using Clang with musl target
 2. **Container tools** (podman/buildah/skopeo) are built with:
@@ -173,6 +186,26 @@ All builds run inside **Ubuntu:rolling containers** using podman for reproducibi
    - netavark, aardvark-dns (Rust, cross-compiled with musl target)
    - pasta, catatonit (C, built with Clang + musl)
 
+#### Glibc Variant (hybrid static)
+
+Dynamically links only glibc (libc.so.6, libm.so.6, libresolv.so.2), all other dependencies statically linked. Requires glibc 2.34+ on target system.
+
+1. **mimalloc** is compiled using Clang without musl target
+2. **Container tools** (podman/buildah/skopeo) are built with:
+   - Go compiler with CGO enabled
+   - Clang as C/C++ compiler (`CC="clang"`)
+   - Partial static linking (`-ldflags "-linkmode external -extldflags '-static-libgcc -Wl,-Bdynamic'"`)
+   - mimalloc linked statically (--whole-archive)
+
+3. **Runtime components** (for full variants):
+   - crun, conmon, fuse-overlayfs (C, built with Clang, glibc dynamic)
+   - netavark, aardvark-dns (Rust, default gnu target)
+   - pasta, catatonit (C, built with Clang, glibc dynamic)
+
+**Choosing a variant:**
+- **static**: Maximum portability, works on any Linux (Ubuntu 20.04+, Alpine, etc.)
+- **glibc**: Modern Linux only (Ubuntu 22.04+, Debian 12+, RHEL 9+), better NSS support (LDAP/NIS)
+
 ### Key Scripts
 
 | Script | Purpose | Usage |
@@ -180,7 +213,7 @@ All builds run inside **Ubuntu:rolling containers** using podman for reproducibi
 | `build-tool.sh` | Build podman/buildah/skopeo | `./scripts/build-tool.sh podman amd64 full` |
 | `build-mimalloc.sh` | Build mimalloc for target arch | `./scripts/build-mimalloc.sh amd64` |
 | `package.sh` | Create .tar.zst release archive | `./scripts/package.sh podman v5.3.1 amd64 full` |
-| `sign-release.sh` | Sign with cosign OIDC | `./scripts/sign-release.sh podman-full.tar.zst` |
+| `sign-release.sh` | Sign with cosign OIDC | `./scripts/sign-release.sh release/` |
 | `check-version.sh` | Check for new upstream versions | `./scripts/check-version.sh podman` |
 | `test-static.sh` | Verify binaries are static | `./scripts/test-static.sh build/podman-amd64/install` |
 
@@ -214,7 +247,7 @@ gh workflow run build-podman.yml -f version=v5.3.1 -f variant=all -f architectur
 3. SHA256 checksums are generated
 4. GitHub Release is created with:
    - Tarballs for each arch/variant
-   - Signatures (`.sig` files)
+   - Signatures (`.bundle` files)
    - `checksums.txt`
    - Installation instructions
 
@@ -223,12 +256,21 @@ gh workflow run build-podman.yml -f version=v5.3.1 -f variant=all -f architectur
 ### Static Binary Verification
 
 ```bash
-# Test that binary has no dynamic dependencies
-./scripts/test-static.sh build/podman-amd64/install
+# Test static variant (musl)
+./scripts/test-static.sh build/podman-amd64/install static
 
 # Expected output:
 # ✓ Binary exists
 # ✓ Binary is truly static (no dynamic dependencies)
+# ✓ Binary is executable
+# ✓ Binary runs successfully
+
+# Test glibc variant
+./scripts/test-static.sh build/podman-amd64-glibc/install glibc
+
+# Expected output:
+# ✓ Binary exists
+# ✓ Binary uses glibc dynamic linking (only glibc dependencies)
 # ✓ Binary is executable
 # ✓ Binary runs successfully
 ```

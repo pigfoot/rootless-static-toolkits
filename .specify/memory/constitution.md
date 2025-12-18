@@ -1,30 +1,30 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.2.1 → 1.3.0
-Bump rationale: Add third package variant (standalone/default/full) - MINOR
+Version change: 1.3.0 → 1.4.0
+Bump rationale: Add glibc libc variant (static + glibc hybrid linking) - MINOR
 
 Modified sections:
-  - Principle IV (Minimal Dependencies): Updated from 2 variants (full/minimal) to 3 variants (standalone/default/full)
-  - Build Artifacts: Updated naming convention and artifact table for 3 variants
-  - Added size information for all variants per tool
+  - Principle I (Truly Static Binaries): Renamed to "Maximally Static Binaries", added glibc variant
+  - Build Artifacts: Added libc variant dimension (static/glibc) to artifact naming
+  - Build Environment: Added glibc build support with unified Clang toolchain
 
 Rationale:
-  - Standalone variant for users with compatible system runtimes (NOT RECOMMENDED)
-  - Default variant with minimum required runtime (RECOMMENDED) - uses simplified naming
-  - Full variant with complete rootless stack
-  - Improves user experience with clearer variant purposes
-  - Default variant gets simplified filename for ease of use
+  - glibc variant provides system integration for modern Linux (glibc 2.34+)
+  - All dependencies except glibc remain statically linked (libstdc++, mimalloc, pthread)
+  - musl-static remains default and recommended for maximum portability
+  - Both variants use unified Clang toolchain
 
 Templates requiring updates:
   - .specify/templates/plan-template.md: ✅ No changes needed (generic template)
   - .specify/templates/spec-template.md: ✅ No changes needed (generic template)
   - .specify/templates/tasks-template.md: ✅ No changes needed (generic template)
 
-Follow-up TODOs: Update tasks.md to use new variant terminology
-
 Previous changes:
 ==================
+Version 1.2.1 → 1.3.0 (MINOR)
+- Add third package variant (standalone/default/full)
+
 Version 1.2.0 → 1.2.1 (PATCH)
 - Adjusted daily check schedule from UTC 00:00 to UTC 02:00
 
@@ -39,16 +39,31 @@ Version 1.1.0 → 1.2.0 (MINOR)
 
 ## Core Principles
 
-### I. Truly Static Binaries
+### I. Maximally Static Binaries
 
-All produced binaries MUST be fully statically linked with zero runtime library dependencies.
+All produced binaries MUST minimize runtime library dependencies through static linking.
 
-- Build using musl libc (Alpine-based) to achieve true static linking
+Two libc variants are supported:
+- **static** (default, recommended): Fully static with musl libc, zero runtime dependencies
+- **glibc**: Hybrid static with only glibc dynamically linked (requires glibc 2.34+)
+
+Static variant requirements:
+- Build using musl libc to achieve true static linking
 - Binaries MUST run on any Linux distribution without additional libraries
-- No dynamic linking to glibc, NSS, or other system libraries
-- Verify static linking with `ldd` showing "not a dynamic executable"
+- Verify with `ldd` showing "not a dynamic executable"
 
-**Rationale**: Static binaries ensure portability across any Linux environment without dependency conflicts or missing library issues.
+Glibc variant requirements:
+- Only glibc (libc.so.6, ld-linux) may be dynamically linked
+- All other dependencies MUST be statically linked: libstdc++, mimalloc, pthread, compiler-rt
+- Verify with `ldd` showing only glibc dependencies
+- Requires glibc 2.34+ on target system (Ubuntu 22.04+, Debian 12+, RHEL 9+)
+
+Both variants:
+- Use unified Clang toolchain
+- Statically link mimalloc via --whole-archive
+- Produce binaries of similar size (~43MB)
+
+**Rationale**: Static linking ensures portability and reduces dependency conflicts. The glibc variant provides an alternative for users who need system integration (NSS, LDAP) while maintaining static linking for all other dependencies.
 
 ### II. Independent Tool Releases
 
@@ -121,32 +136,41 @@ Version detection and releases MUST be fully automated.
 
 ### Build Artifacts
 
-For each tool release, three variants are provided:
+For each tool release, artifacts are organized by two dimensions:
+- **Libc variant**: `static` (musl, default) or `glibc`
+- **Package variant**: `standalone`, `default`, or `full`
 
 | Artifact | Description |
 |----------|-------------|
-| `{tool}-linux-{arch}.tar.zst` | Default variant (simplified name) - binary + crun + conmon + configs |
-| `{tool}-standalone-linux-{arch}.tar.zst` | Standalone variant - binary only |
-| `{tool}-full-linux-{arch}.tar.zst` | Full variant - complete rootless stack |
+| `{tool}-{version}-linux-{arch}-static.tar.zst` | Static/musl default variant (recommended) |
+| `{tool}-{version}-linux-{arch}-glibc.tar.zst` | Glibc default variant |
+| `{tool}-{version}-linux-{arch}-static-standalone.tar.zst` | Static standalone (binary only) |
+| `{tool}-{version}-linux-{arch}-static-full.tar.zst` | Static full (complete rootless stack) |
+| `{tool}-{version}-linux-{arch}-glibc-standalone.tar.zst` | Glibc standalone (binary only) |
+| `{tool}-{version}-linux-{arch}-glibc-full.tar.zst` | Glibc full (complete rootless stack) |
 | `checksums.txt` | SHA256 checksums for all tarballs |
 | `*.bundle` | Cosign signature bundles (keyless OIDC) |
 
 **Naming Convention**:
-- Default variant uses simplified filename for ease of use (e.g., `podman-linux-amd64.tar.zst`)
-- Other variants include variant name (e.g., `podman-full-linux-amd64.tar.zst`)
+- Format: `{tool}-{version}-linux-{arch}-{libc}[-{package}].tar.zst`
+- Default package variant omits package suffix for simplicity
+- Static libc is recommended for maximum portability
 
 **Per-tool Differences**:
 - Podman full: Adds netavark, aardvark-dns, pasta, fuse-overlayfs, catatonit
 - Buildah full: Adds fuse-overlayfs only
-- Skopeo: All variants identical (no runtime components needed)
+- Skopeo: All package variants identical (no runtime components needed)
 
 ### Build Environment
 
-- **Primary**: Clang with musl target (GCC compatibility, build system support)
-- **Fallback**: Alpine Linux container with musl-based toolchain
-- **Allocator**: mimalloc (statically linked, replaces musl's slow allocator)
+- **Container Base**: Ubuntu latest (provides both musl-tools and glibc)
+- **Compiler**: Clang (unified toolchain for both libc variants)
+  - Static variant: `clang --target={arch}-linux-musl`
+  - Glibc variant: `clang` (default target)
+- **Allocator**: mimalloc (statically linked via --whole-archive for both variants)
+- **Build Tools**: `uv` for Python tools (meson, ninja), direct download for cmake
 - **Cross-compilation**: Clang cross-compile on amd64 runner; native arm64 runner as fallback
-- **Minimum Requirements**: Clang (any version with musl support), Go 1.21+, protobuf-compiler (for Rust components)
+- **Minimum Requirements**: Clang, Go 1.21+, Rust stable, protobuf-compiler, musl-tools
 
 ## Release Pipeline
 
@@ -201,4 +225,4 @@ Upstream repos:
 - Upstream reference: https://github.com/mgoltzsche/podman-static
 - Container tools: https://github.com/containers
 
-**Version**: 1.3.0 | **Ratified**: 2025-12-12 | **Last Amended**: 2025-12-15
+**Version**: 1.4.0 | **Ratified**: 2025-12-12 | **Last Amended**: 2025-12-16

@@ -1,0 +1,55 @@
+# Git directory
+.git/
+.gitignore
+
+# Build outputs
+build/
+dist/
+out/
+*.tar.gz
+*.tar.xz
+*.tar.zst
+*.zip
+
+# Logs and temp files
+*.log
+*.tmp
+tmp/
+temp/
+
+# Environment files
+.env
+.env.*
+
+# Cache directories
+.cache/
+zig-cache/
+zig-out/
+
+# Coverage reports
+coverage/
+*.lcov
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Spec-kit workflow state
+.specify/
+
+# Agent session files
+.claude/
+.agent/
+.gemini/
+
+# Test and debug files
+test-*.*
+debug-*.*
+temp-*.*
+scratch-*.*
+*-test.*
+*-debug.*

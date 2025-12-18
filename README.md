@@ -5,12 +5,13 @@
 [![Build Skopeo](https://github.com/pigfoot/static-rootless-container-tools/actions/workflows/build-skopeo.yml/badge.svg)](https://github.com/pigfoot/static-rootless-container-tools/actions/workflows/build-skopeo.yml)
 [![Check New Releases](https://github.com/pigfoot/static-rootless-container-tools/actions/workflows/check-releases.yml/badge.svg)](https://github.com/pigfoot/static-rootless-container-tools/actions/workflows/check-releases.yml)
 
-Build truly static binaries for **podman**, **buildah**, and **skopeo** targeting `linux/amd64` and `linux/arm64`.
+Build static and glibc binaries for **podman**, **buildah**, and **skopeo** targeting `linux/amd64` and `linux/arm64`.
 
 ## Features
 
-- **Truly Static Binaries**: Built with musl libc + mimalloc in containerized Ubuntu:rolling, runs on any Linux distribution
-- **Cross-Architecture**: Supports amd64 and arm64 via Clang cross-compilation with musl target
+- **Two Build Variants**: Static (musl, fully static) and glibc (hybrid static, only glibc dynamic)
+- **Unified Clang Toolchain**: Both variants built with Clang + mimalloc in containerized Ubuntu:latest
+- **Cross-Architecture**: Supports amd64 and arm64
 - **Independent Releases**: Each tool released separately when upstream updates
 - **Automated Pipeline**: Daily upstream version checks (2 AM UTC) with GitHub Actions
 - **Verified Downloads**: SHA256 checksums + Sigstore/cosign keyless OIDC signatures
@@ -24,29 +25,32 @@ Build truly static binaries for **podman**, **buildah**, and **skopeo** targetin
 REPO="pigfoot/static-rootless-container-tools"
 ARCH=$([[ $(uname -m) == "aarch64" ]] && echo "arm64" || echo "amd64")
 
-# Download latest podman (default variant - recommended)
+# Download latest podman (default variant, static libc - recommended)
 TOOL="podman"
 TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases" | \
   sed -n 's/.*"tag_name": "\('"${TOOL}"'-v[^"]*\)".*/\1/p' | head -1)
-curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}-linux-${ARCH}.tar.zst" | \
+VERSION=${TAG#${TOOL}-}  # Extract version (e.g., v5.7.1)
+curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}-${VERSION}-linux-${ARCH}-static.tar.zst" | \
   zstd -d | tar xvf -
 
 # Or download podman-full for complete rootless stack
-curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}-full-linux-${ARCH}.tar.zst" | \
+curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}-${VERSION}-linux-${ARCH}-static-full.tar.zst" | \
   zstd -d | tar xvf -
 
-# Download latest buildah (default variant - recommended)
+# Download latest buildah (default variant, static libc - recommended)
 TOOL="buildah"
 TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases" | \
   sed -n 's/.*"tag_name": "\('"${TOOL}"'-v[^"]*\)".*/\1/p' | head -1)
-curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}-linux-${ARCH}.tar.zst" | \
+VERSION=${TAG#${TOOL}-}
+curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}-${VERSION}-linux-${ARCH}-static.tar.zst" | \
   zstd -d | tar xvf -
 
-# Download latest skopeo (default variant - recommended)
+# Download latest skopeo (default variant, static libc - recommended)
 TOOL="skopeo"
 TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases" | \
   sed -n 's/.*"tag_name": "\('"${TOOL}"'-v[^"]*\)".*/\1/p' | head -1)
-curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}-linux-${ARCH}.tar.zst" | \
+VERSION=${TAG#${TOOL}-}
+curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}-${VERSION}-linux-${ARCH}-static.tar.zst" | \
   zstd -d | tar xvf -
 ```
 
@@ -55,11 +59,11 @@ curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}-linux-${
 Check [Releases](https://github.com/pigfoot/static-rootless-container-tools/releases) for all available versions.
 
 ```bash
-# Example: Download podman default variant v5.7.1 for linux/amd64 (recommended)
-curl -fsSL -O https://github.com/pigfoot/static-rootless-container-tools/releases/download/podman-v5.7.1/podman-linux-amd64.tar.zst
+# Example: Download podman default variant v5.7.1 for linux/amd64 (static, recommended)
+curl -fsSL -O https://github.com/pigfoot/static-rootless-container-tools/releases/download/podman-v5.7.1/podman-v5.7.1-linux-amd64-static.tar.zst
 
 # Extract
-zstd -d podman-linux-amd64.tar.zst && tar -xf podman-linux-amd64.tar
+zstd -d podman-v5.7.1-linux-amd64-static.tar.zst && tar -xf podman-v5.7.1-linux-amd64-static.tar
 cd podman-v5.7.1
 
 # Install system-wide
@@ -83,12 +87,87 @@ curl -fsSL -O https://github.com/pigfoot/static-rootless-container-tools/release
 sha256sum -c checksums.txt --ignore-missing
 
 # Verify cosign signature (requires cosign CLI)
-curl -fsSL -O https://github.com/pigfoot/static-rootless-container-tools/releases/download/podman-v5.7.1/podman-linux-amd64.tar.zst.bundle
+curl -fsSL -O https://github.com/pigfoot/static-rootless-container-tools/releases/download/podman-v5.7.1/podman-v5.7.1-linux-amd64-static.tar.zst.bundle
 cosign verify-blob \
-  --bundle=podman-linux-amd64.tar.zst.bundle \
+  --bundle=podman-v5.7.1-linux-amd64-static.tar.zst.bundle \
   --certificate-identity-regexp='https://github.com/.*' \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
-  podman-linux-amd64.tar.zst
+  podman-v5.7.1-linux-amd64-static.tar.zst
+```
+
+## Build Variants
+
+All binaries are available in two libc linking strategies:
+
+| Variant | Libc | Linking | Portability | Binary Size | Use Case |
+|---------|------|---------|-------------|-------------|----------|
+| **static** (default) | musl | Fully static | Maximum - runs on any Linux | ~43MB | **RECOMMENDED** - CI/CD, containers, maximum compatibility |
+| **glibc** | glibc | Only glibc dynamic, rest static | Modern Linux (glibc 2.34+) | ~43MB | System integration, enterprise (LDAP/NIS) |
+
+### Static vs Glibc: What's Linked?
+
+| Component | Static (musl) | Glibc (dynamic) |
+|-----------|---------------|-----------------|
+| C library (libc) | musl (static) | glibc (dynamic) |
+| C++ stdlib (libstdc++) | Static | Static |
+| pthread | Static | Static |
+| Memory allocator (mimalloc) | Static (--whole-archive) | Static (--whole-archive) |
+| Compiler runtime | N/A | Static (libgcc/compiler-rt) |
+| Go runtime | Static | Static |
+
+**Static variant**: Zero runtime dependencies, works everywhere
+**Glibc variant**: Only links glibc dynamically (libc.so.6, ld-linux), all other dependencies static
+
+### Choosing a Build Variant
+
+Use this decision tree to select the right variant:
+
+```
+┌─ Maximum portability needed?
+│  └─ YES → static (musl)
+│
+├─ Deploying to containers/CI/CD?
+│  └─ YES → static (musl)
+│
+├─ Enterprise environment with LDAP/NIS?
+│  └─ YES → glibc
+│
+├─ Target only modern distros (Ubuntu 22.04+, Debian 12+, RHEL 9+)?
+│  └─ YES → Either variant works
+│
+└─ Default recommendation
+   └─ static (maximum compatibility)
+```
+
+### OS Compatibility Matrix
+
+| Distribution | glibc Version | Static Variant | Glibc Variant |
+|--------------|---------------|----------------|---------------|
+| Ubuntu 20.04 | 2.31 | ✅ Works | ❌ Too old |
+| Ubuntu 22.04+ | 2.35+ | ✅ Works | ✅ Works |
+| Ubuntu 24.04 | 2.39 | ✅ Works | ✅ Works |
+| Debian 11 | 2.31 | ✅ Works | ❌ Too old |
+| Debian 12+ | 2.36+ | ✅ Works | ✅ Works |
+| RHEL 8 | 2.28 | ✅ Works | ❌ Too old |
+| RHEL 9+ | 2.34+ | ✅ Works | ✅ Works |
+| Alpine Linux | musl | ✅ Works | ❌ No glibc |
+| Any Linux | Any | ✅ Works | Requires glibc 2.34+ |
+
+**Glibc variant requirement**: Target system must have glibc 2.34 or newer
+
+### Download Examples
+
+```bash
+REPO="pigfoot/static-rootless-container-tools"
+ARCH=$([[ $(uname -m) == "aarch64" ]] && echo "arm64" || echo "amd64")
+
+# Static variant (default - recommended)
+curl -fsSL "https://github.com/${REPO}/releases/download/podman-v5.7.1/podman-v5.7.1-linux-${ARCH}-static.tar.zst" | \
+  zstd -d | tar xvf -
+
+# Glibc variant (for modern Linux systems)
+curl -fsSL "https://github.com/${REPO}/releases/download/podman-v5.7.1/podman-v5.7.1-linux-${ARCH}-glibc.tar.zst" | \
+  zstd -d | tar xvf -
 ```
 
 ## Package Variants
@@ -99,9 +178,9 @@ All tools provide three package variants to suit different use cases:
 
 | Variant | Size | Components | Use Case |
 |---------|------|------------|----------|
-| **podman-linux-{arch}.tar.zst** ⭐ | ~49MB | podman + crun + conmon + configs | **RECOMMENDED** - Core container functionality, works everywhere |
-| **podman-standalone-linux-{arch}.tar.zst** ⚠️ | ~44MB | podman only | NOT RECOMMENDED - requires system runc ≥1.1.11 + latest conmon |
-| **podman-full-linux-{arch}.tar.zst** | ~74MB | Default + all networking tools | Complete rootless stack with custom networks |
+| **podman-{ver}-linux-{arch}-{libc}.tar.zst** ⭐ | ~49MB | podman + crun + conmon + configs | **RECOMMENDED** - Core container functionality, works everywhere |
+| **podman-{ver}-linux-{arch}-{libc}-standalone.tar.zst** ⚠️ | ~44MB | podman only | NOT RECOMMENDED - requires system runc ≥1.1.11 + latest conmon |
+| **podman-{ver}-linux-{arch}-{libc}-full.tar.zst** | ~74MB | Default + all networking tools | Complete rootless stack with custom networks |
 
 **Default variant includes**: podman (44MB), crun (2.6MB), conmon (2.3MB), configs
 
@@ -111,9 +190,9 @@ All tools provide three package variants to suit different use cases:
 
 | Variant | Size | Components | Use Case |
 |---------|------|------------|----------|
-| **buildah-linux-{arch}.tar.zst** ⭐ | ~55MB | buildah + crun + conmon + configs | **RECOMMENDED** - Build images with `buildah run` support |
-| **buildah-standalone-linux-{arch}.tar.zst** ⚠️ | ~50MB | buildah only | NOT RECOMMENDED - requires system runc/crun + conmon |
-| **buildah-full-linux-{arch}.tar.zst** | ~56MB | Default + fuse-overlayfs | Rootless image building with overlay mounts |
+| **buildah-{ver}-linux-{arch}-{libc}.tar.zst** ⭐ | ~55MB | buildah + crun + conmon + configs | **RECOMMENDED** - Build images with `buildah run` support |
+| **buildah-{ver}-linux-{arch}-{libc}-standalone.tar.zst** ⚠️ | ~50MB | buildah only | NOT RECOMMENDED - requires system runc/crun + conmon |
+| **buildah-{ver}-linux-{arch}-{libc}-full.tar.zst** | ~56MB | Default + fuse-overlayfs | Rootless image building with overlay mounts |
 
 **Default variant includes**: buildah (~50MB), crun (2.6MB), conmon (2.3MB), configs
 
@@ -123,9 +202,9 @@ All tools provide three package variants to suit different use cases:
 
 | Variant | Size | Components | Use Case |
 |---------|------|------------|----------|
-| **skopeo-linux-{arch}.tar.zst** ⭐ | ~30MB | skopeo + configs | **RECOMMENDED** - Image operations with registry configs |
-| **skopeo-standalone-linux-{arch}.tar.zst** | ~30MB | skopeo only | Binary only |
-| **skopeo-full-linux-{arch}.tar.zst** | ~30MB | Same as default | Alias (skopeo needs no runtime components) |
+| **skopeo-{ver}-linux-{arch}-{libc}.tar.zst** ⭐ | ~30MB | skopeo + configs | **RECOMMENDED** - Image operations with registry configs |
+| **skopeo-{ver}-linux-{arch}-{libc}-standalone.tar.zst** | ~30MB | skopeo only | Binary only |
+| **skopeo-{ver}-linux-{arch}-{libc}-full.tar.zst** | ~30MB | Same as default | Alias (skopeo needs no runtime components) |
 
 **Note**: All skopeo variants are essentially the same since skopeo doesn't run containers.
 

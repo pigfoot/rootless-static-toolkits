@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Package built binaries into release tarball
-# Usage: ./scripts/package.sh <tool> <version> <arch> [variant]
-# Example: ./scripts/package.sh podman v5.3.1 amd64 full
-#          ./scripts/package.sh buildah v1.35.0 arm64
+# Usage: ./scripts/package.sh <tool> <arch> <libc> [variant] [version]
+# Example: ./scripts/package.sh podman amd64 static full v5.3.1
+#          ./scripts/package.sh buildah arm64 glibc default v1.35.0
 
 set -euo pipefail
 
@@ -11,16 +11,17 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Parse arguments
 TOOL="${1:-}"
-VERSION="${2:-}"
-ARCH="${3:-}"
-VARIANT="${4:-}"
+ARCH="${2:-amd64}"
+LIBC="${3:-static}"
+VARIANT="${4:-default}"
+VERSION="${5:-}"
 
-if [[ -z "$TOOL" || -z "$VERSION" || -z "$ARCH" ]]; then
+if [[ -z "$TOOL" ]]; then
   echo "Error: Missing required arguments" >&2
-  echo "Usage: $0 <tool> <version> <arch> [variant]" >&2
-  echo "Example: $0 podman v5.3.1 amd64 full" >&2
-  echo "         $0 buildah v1.35.0 arm64 default" >&2
-  echo "         $0 skopeo v1.14.0 amd64 standalone" >&2
+  echo "Usage: $0 <tool> <arch> <libc> [variant] [version]" >&2
+  echo "Example: $0 podman amd64 static full v5.3.1" >&2
+  echo "         $0 buildah arm64 glibc default v1.35.0" >&2
+  echo "         $0 skopeo amd64 static standalone v1.14.0" >&2
   exit 1
 fi
 
@@ -45,25 +46,50 @@ case "$VARIANT" in
     ;;
 esac
 
-# Determine tarball name
-# default variant uses simple name (e.g., podman-linux-amd64.tar.zst)
-# other variants include variant name (e.g., podman-full-linux-amd64.tar.zst)
+# Validate libc
+case "$LIBC" in
+  static|glibc)
+    ;;
+  *)
+    echo "Error: Unsupported libc: $LIBC" >&2
+    echo "Supported: static (musl), glibc (dynamic glibc)" >&2
+    exit 1
+    ;;
+esac
+
+# Determine tarball name according to constitution naming convention:
+# {tool}-{version}-linux-{arch}-{libc}[-{package}].tar.zst
+# Default package variant omits package suffix
 if [[ "$VARIANT" == "default" ]]; then
-  TARBALL_NAME="${TOOL}-linux-${ARCH}"
+  if [[ -n "$VERSION" ]]; then
+    TARBALL_NAME="${TOOL}-${VERSION}-linux-${ARCH}-${LIBC}"
+  else
+    TARBALL_NAME="${TOOL}-linux-${ARCH}-${LIBC}"
+  fi
 else
-  TARBALL_NAME="${TOOL}-${VARIANT}-linux-${ARCH}"
+  if [[ -n "$VERSION" ]]; then
+    TARBALL_NAME="${TOOL}-${VERSION}-linux-${ARCH}-${LIBC}-${VARIANT}"
+  else
+    TARBALL_NAME="${TOOL}-linux-${ARCH}-${LIBC}-${VARIANT}"
+  fi
 fi
 
 PACKAGE_DIR="${TOOL}-${VERSION}"
-BUILD_DIR="$PROJECT_ROOT/build/$TOOL-$ARCH"
+# Use libc-specific build directory
+if [[ "$LIBC" == "glibc" ]]; then
+  BUILD_DIR="$PROJECT_ROOT/build/$TOOL-$ARCH-glibc"
+else
+  BUILD_DIR="$PROJECT_ROOT/build/$TOOL-$ARCH"
+fi
 INSTALL_DIR="$BUILD_DIR/install"
 STAGING_DIR="$BUILD_DIR/staging"
 CONFIG_DIR="$PROJECT_ROOT/etc/containers"
 
 echo "========================================"
-echo "Packaging: $TOOL $VERSION"
+echo "Packaging: $TOOL ${VERSION:-latest}"
 echo "Architecture: $ARCH"
-[[ -n "$VARIANT" ]] && echo "Variant: $VARIANT"
+echo "Libc variant: $LIBC"
+echo "Package variant: $VARIANT"
 echo "Output: ${TARBALL_NAME}.tar.zst"
 echo "========================================"
 

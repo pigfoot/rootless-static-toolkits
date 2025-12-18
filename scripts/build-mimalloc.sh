@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build mimalloc as static library for musl targets
-# Usage: ./scripts/build-mimalloc.sh <target-arch>
-# Example: ./scripts/build-mimalloc.sh amd64
-#          ./scripts/build-mimalloc.sh arm64
+# Build mimalloc as static library for musl or glibc targets
+# Usage: ./scripts/build-mimalloc.sh <target-arch> [libc]
+# Example: ./scripts/build-mimalloc.sh amd64 static
+#          ./scripts/build-mimalloc.sh arm64 glibc
 
 set -euo pipefail
 
@@ -12,8 +12,9 @@ MIMALLOC_DIR="$PROJECT_ROOT/build/mimalloc"
 
 # Parse arguments
 ARCH="${1:-amd64}"
+LIBC="${2:-static}"
 
-echo "Building mimalloc for $ARCH (native build)..."
+echo "Building mimalloc for $ARCH with libc=$LIBC (native build)..."
 
 # Check dependencies
 if ! command -v clang &> /dev/null; then
@@ -47,13 +48,25 @@ cd "$MIMALLOC_DIR"
 # Configure with CMake using Clang as compiler
 CLANG_PATH=$(which clang)
 
+# Set compile flags based on libc variant
+if [[ "$LIBC" == "static" ]]; then
+  # Full static linking for musl variant
+  CMAKE_C_FLAGS="-static"
+  CMAKE_CXX_FLAGS="-static -stdlib=libc++"
+else
+  # No global -static for glibc variant (only static-link non-glibc libraries)
+  # Use libc++ instead of libstdc++ (LLVM's C++ library)
+  CMAKE_C_FLAGS=""
+  CMAKE_CXX_FLAGS="-stdlib=libc++"
+fi
+
 cmake -B "$BUILD_DIR" \
   -G "Ninja" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER="$CLANG_PATH" \
-  -DCMAKE_C_FLAGS="-static" \
+  -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS" \
   -DCMAKE_CXX_COMPILER="$(which clang++)" \
-  -DCMAKE_CXX_FLAGS="-static" \
+  -DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS" \
   -DMI_BUILD_SHARED=OFF \
   -DMI_BUILD_STATIC=ON \
   -DMI_BUILD_OBJECT=OFF \

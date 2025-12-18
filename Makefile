@@ -5,8 +5,9 @@ SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
 
 # Default configuration
-CONTAINER_IMAGE := docker.io/ubuntu:rolling
+CONTAINER_IMAGE := docker.io/ubuntu:latest
 ARCH := amd64
+LIBC := static
 VERSION ?= latest
 
 # Directories
@@ -34,7 +35,7 @@ pull-image: ## Pull the build container image
 
 .PHONY: build-podman
 build-podman: pull-image ## Build podman (full variant by default)
-	@echo "Building podman for $(ARCH)..."
+	@echo "Building podman for $(ARCH) ($(LIBC))..."
 	$(PODMAN) run --rm \
 		$(MOUNT_SCRIPTS) \
 		$(MOUNT_BUILD) \
@@ -42,16 +43,22 @@ build-podman: pull-image ## Build podman (full variant by default)
 		-e TOOL=podman \
 		-e ARCH=$(ARCH) \
 		-e VARIANT=full \
+		-e LIBC=$(LIBC) \
 		$(CONTAINER_IMAGE) \
 		bash -c " \
 			/workspace/scripts/container/setup-build-env.sh && \
-			/workspace/scripts/build-tool.sh podman $(ARCH) full && \
-			/workspace/scripts/package.sh podman $(ARCH) full \
+			{ [ -f /etc/profile.d/go.sh ] && source /etc/profile.d/go.sh; } || true && \
+			{ [ -f /etc/profile.d/llvm.sh ] && source /etc/profile.d/llvm.sh; } || true && \
+			{ [ -f /etc/profile.d/cmake.sh ] && source /etc/profile.d/cmake.sh; } || true && \
+			{ [ -f /etc/profile.d/uv.sh ] && source /etc/profile.d/uv.sh; } || true && \
+			{ [ -f /root/.cargo/env ] && source /root/.cargo/env; } || true && \
+			/workspace/scripts/build-tool.sh podman $(ARCH) full $(LIBC) && \
+			/workspace/scripts/package.sh podman $(ARCH) $(LIBC) full $(VERSION) \
 		"
 
 .PHONY: build-podman-minimal
 build-podman-minimal: pull-image ## Build podman (minimal variant)
-	@echo "Building podman-minimal for $(ARCH)..."
+	@echo "Building podman-minimal for $(ARCH) ($(LIBC))..."
 	$(PODMAN) run --rm \
 		$(MOUNT_SCRIPTS) \
 		$(MOUNT_BUILD) \
@@ -59,43 +66,61 @@ build-podman-minimal: pull-image ## Build podman (minimal variant)
 		-e TOOL=podman \
 		-e ARCH=$(ARCH) \
 		-e VARIANT=minimal \
+		-e LIBC=$(LIBC) \
 		$(CONTAINER_IMAGE) \
 		bash -c " \
 			/workspace/scripts/container/setup-build-env.sh && \
-			/workspace/scripts/build-tool.sh podman $(ARCH) minimal && \
-			/workspace/scripts/package.sh podman $(ARCH) minimal \
+			{ [ -f /etc/profile.d/go.sh ] && source /etc/profile.d/go.sh; } || true && \
+			{ [ -f /etc/profile.d/llvm.sh ] && source /etc/profile.d/llvm.sh; } || true && \
+			{ [ -f /etc/profile.d/cmake.sh ] && source /etc/profile.d/cmake.sh; } || true && \
+			{ [ -f /etc/profile.d/uv.sh ] && source /etc/profile.d/uv.sh; } || true && \
+			{ [ -f /root/.cargo/env ] && source /root/.cargo/env; } || true && \
+			/workspace/scripts/build-tool.sh podman $(ARCH) minimal $(LIBC) && \
+			/workspace/scripts/package.sh podman $(ARCH) $(LIBC) minimal $(VERSION) \
 		"
 
 .PHONY: build-buildah
 build-buildah: pull-image ## Build buildah
-	@echo "Building buildah for $(ARCH)..."
+	@echo "Building buildah for $(ARCH) ($(LIBC))..."
 	$(PODMAN) run --rm \
 		$(MOUNT_SCRIPTS) \
 		$(MOUNT_BUILD) \
 		-e VERSION=$(VERSION) \
 		-e TOOL=buildah \
 		-e ARCH=$(ARCH) \
+		-e LIBC=$(LIBC) \
 		$(CONTAINER_IMAGE) \
 		bash -c " \
 			/workspace/scripts/container/setup-build-env.sh && \
-			/workspace/scripts/build-tool.sh buildah $(ARCH) && \
-			/workspace/scripts/package.sh buildah $(ARCH) \
+			{ [ -f /etc/profile.d/go.sh ] && source /etc/profile.d/go.sh; } || true && \
+			{ [ -f /etc/profile.d/llvm.sh ] && source /etc/profile.d/llvm.sh; } || true && \
+			{ [ -f /etc/profile.d/cmake.sh ] && source /etc/profile.d/cmake.sh; } || true && \
+			{ [ -f /etc/profile.d/uv.sh ] && source /etc/profile.d/uv.sh; } || true && \
+			{ [ -f /root/.cargo/env ] && source /root/.cargo/env; } || true && \
+			/workspace/scripts/build-tool.sh buildah $(ARCH) default $(LIBC) && \
+			/workspace/scripts/package.sh buildah $(ARCH) $(LIBC) default $(VERSION) \
 		"
 
 .PHONY: build-skopeo
 build-skopeo: pull-image ## Build skopeo
-	@echo "Building skopeo for $(ARCH)..."
+	@echo "Building skopeo for $(ARCH) ($(LIBC))..."
 	$(PODMAN) run --rm \
 		$(MOUNT_SCRIPTS) \
 		$(MOUNT_BUILD) \
 		-e VERSION=$(VERSION) \
 		-e TOOL=skopeo \
 		-e ARCH=$(ARCH) \
+		-e LIBC=$(LIBC) \
 		$(CONTAINER_IMAGE) \
 		bash -c " \
 			/workspace/scripts/container/setup-build-env.sh && \
-			/workspace/scripts/build-tool.sh skopeo $(ARCH) && \
-			/workspace/scripts/package.sh skopeo $(ARCH) \
+			{ [ -f /etc/profile.d/go.sh ] && source /etc/profile.d/go.sh; } || true && \
+			{ [ -f /etc/profile.d/llvm.sh ] && source /etc/profile.d/llvm.sh; } || true && \
+			{ [ -f /etc/profile.d/cmake.sh ] && source /etc/profile.d/cmake.sh; } || true && \
+			{ [ -f /etc/profile.d/uv.sh ] && source /etc/profile.d/uv.sh; } || true && \
+			{ [ -f /root/.cargo/env ] && source /root/.cargo/env; } || true && \
+			/workspace/scripts/build-tool.sh skopeo $(ARCH) default $(LIBC) && \
+			/workspace/scripts/package.sh skopeo $(ARCH) $(LIBC) default $(VERSION) \
 		"
 
 .PHONY: build-all

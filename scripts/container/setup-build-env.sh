@@ -36,9 +36,8 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
     software-properties-common \
     musl-dev \
     musl-tools \
+    libc6-dev \
     make \
-    cmake \
-    ninja-build \
     autoconf \
     automake \
     libtool \
@@ -50,8 +49,50 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
     gperf \
     libglib2.0-dev \
     libcap-dev \
-    meson \
     protobuf-compiler
+
+# Install uv for Python-based build tools
+echo "Installing uv..."
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="/root/.local/bin:$PATH"
+echo 'export PATH="/root/.local/bin:$PATH"' >> /etc/profile.d/uv.sh
+
+# Install Python-based build tools via uv
+echo "Installing meson and ninja via uv..."
+/root/.local/bin/uv tool install meson
+/root/.local/bin/uv tool install ninja
+
+# Install cmake via direct download from Kitware
+echo "Installing cmake from Kitware..."
+CMAKE_ARCH=$(uname -m)
+CMAKE_VERSION=$(curl -s https://api.github.com/repos/Kitware/CMake/releases/latest | sed -n 's/.*"tag_name": "v\([^"]*\)".*/\1/p')
+# Fallback to known stable version if API fails (rate limit, network issues)
+if [[ -z "$CMAKE_VERSION" ]]; then
+    CMAKE_VERSION="3.31.3"
+    echo "  Warning: Could not detect latest CMake version, using fallback: $CMAKE_VERSION"
+else
+    echo "  Detected latest CMake version: $CMAKE_VERSION"
+fi
+
+if [[ "$CMAKE_ARCH" == "x86_64" ]]; then
+    CMAKE_TARBALL="cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz"
+elif [[ "$CMAKE_ARCH" == "aarch64" ]]; then
+    CMAKE_TARBALL="cmake-${CMAKE_VERSION}-linux-aarch64.tar.gz"
+else
+    echo "Error: Unsupported architecture for cmake: $CMAKE_ARCH"
+    exit 1
+fi
+
+CMAKE_URL="https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/${CMAKE_TARBALL}"
+echo "  Downloading $CMAKE_TARBALL..."
+curl -fsSL "$CMAKE_URL" -o /tmp/cmake.tar.gz
+mkdir -p /usr/local/cmake
+tar -xzf /tmp/cmake.tar.gz -C /usr/local/cmake --strip-components=1
+rm /tmp/cmake.tar.gz
+
+# Add cmake to PATH
+export PATH="/usr/local/cmake/bin:$PATH"
+echo 'export PATH="/usr/local/cmake/bin:$PATH"' >> /etc/profile.d/cmake.sh
 
 # Install latest stable Clang/LLVM from GitHub releases
 echo "Installing latest stable Clang/LLVM from GitHub..."
@@ -67,8 +108,8 @@ else
     exit 1
 fi
 
-# Get latest LLVM release version
-# Use GITHUB_TOKEN if available to avoid rate limiting
+# Get latest LLVM release version with prebuilt binaries
+# Note: Latest release may not have prebuilt binaries yet, so we try with fallback
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   LLVM_TAG=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
       https://api.github.com/repos/llvm/llvm-project/releases/latest | \
@@ -80,12 +121,34 @@ fi
 LLVM_VERSION="${LLVM_TAG#llvmorg-}"
 echo "  Detected latest LLVM version: $LLVM_VERSION (tag: $LLVM_TAG)"
 
-# Download and extract LLVM
+# Download and extract LLVM (with retry fallback to previous version)
 LLVM_TARBALL="LLVM-${LLVM_VERSION}-Linux-${LLVM_ARCH}.tar.xz"
-LLVM_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/${LLVM_TARBALL}"
+LLVM_URL="https://github.com/llvm/llvm-project/releases/download/${LLVM_TAG}/${LLVM_TARBALL}"
 
 echo "  Downloading $LLVM_TARBALL..."
-curl -fsSL "$LLVM_URL" -o /tmp/llvm.tar.xz
+if ! curl -fsSL "$LLVM_URL" -o /tmp/llvm.tar.xz; then
+  echo "  Warning: Latest version prebuilt binary not available yet, trying previous version..."
+
+  # Try previous versions (usually N-1 or N-2 has binaries)
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    LLVM_TAG=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+        "https://api.github.com/repos/llvm/llvm-project/releases" | \
+        sed -n 's/.*"tag_name": "\(llvmorg-[^"]*\)".*/\1/p' | head -2 | tail -1)
+  else
+    LLVM_TAG=$(curl -fsSL \
+        "https://api.github.com/repos/llvm/llvm-project/releases" | \
+        sed -n 's/.*"tag_name": "\(llvmorg-[^"]*\)".*/\1/p' | head -2 | tail -1)
+  fi
+
+  LLVM_VERSION="${LLVM_TAG#llvmorg-}"
+  LLVM_TARBALL="LLVM-${LLVM_VERSION}-Linux-${LLVM_ARCH}.tar.xz"
+  LLVM_URL="https://github.com/llvm/llvm-project/releases/download/${LLVM_TAG}/${LLVM_TARBALL}"
+
+  echo "  Trying LLVM $LLVM_VERSION instead..."
+  curl -fsSL "$LLVM_URL" -o /tmp/llvm.tar.xz
+fi
+
+echo "  Using LLVM version: $LLVM_VERSION"
 
 echo "  Extracting to /usr/local/llvm..."
 mkdir -p /usr/local/llvm
@@ -156,8 +219,14 @@ echo "  - Clang: $(clang --version | head -n1)"
 echo "  - Go: $(go version)"
 echo "  - Rust: $(rustc --version)"
 echo "  - Cargo: $(cargo --version)"
+echo "  - CMake: $(/usr/local/cmake/bin/cmake --version | head -n1)"
+echo "  - Meson: $(/root/.local/bin/uv tool run meson --version)"
+echo "  - Ninja: $(/root/.local/bin/uv tool run ninja --version)"
+echo "  - uv: $(/root/.local/bin/uv --version)"
 echo ""
 echo "Tool locations:"
 echo "  - Clang: $(which clang)"
 echo "  - Go: $(which go)"
 echo "  - Rust: $(which rustc)"
+echo "  - CMake: /usr/local/cmake/bin/cmake"
+echo "  - uv: /root/.local/bin/uv"

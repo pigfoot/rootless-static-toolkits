@@ -67,13 +67,14 @@ jobs:
           echo "✓ Version '$VERSION' is valid"
 
   build:
-    name: Build skopeo-${{ matrix.variant }}-${{ matrix.arch }}
+    name: Build skopeo-${{ matrix.libc }}-${{ matrix.variant }}-${{ matrix.arch }}
     needs: validate
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         arch: [amd64, arm64]
         variant: [standalone, default, full]
+        libc: [static, glibc]
         include:
           - arch: amd64
             runner: ubuntu-24.04
@@ -91,7 +92,7 @@ jobs:
           sudo apt-get install -y podman
 
       - name: Pull container image
-        run: podman pull docker.io/ubuntu:rolling
+        run: podman pull docker.io/ubuntu:latest
 
       - name: Create build directory
         run: mkdir -p build
@@ -102,6 +103,7 @@ jobs:
           TOOL: skopeo
           ARCH: ${{ matrix.arch }}
           VARIANT: ${{ matrix.variant }}
+          LIBC: ${{ matrix.libc }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Record build start time (NFR-005: build duration < 30 minutes)
@@ -115,12 +117,13 @@ jobs:
             -e TOOL=$TOOL \
             -e ARCH=$ARCH \
             -e VARIANT=$VARIANT \
+            -e LIBC=$LIBC \
             -e GITHUB_TOKEN=$GITHUB_TOKEN \
-            docker.io/ubuntu:rolling \
+            docker.io/ubuntu:latest \
             bash -c "
               source /workspace/scripts/container/setup-build-env.sh && \
-              /workspace/scripts/build-tool.sh $TOOL $ARCH $VARIANT && \
-              /workspace/scripts/package.sh $TOOL $VERSION $ARCH $VARIANT
+              /workspace/scripts/build-tool.sh $TOOL $ARCH $VARIANT $LIBC && \
+              /workspace/scripts/package.sh $TOOL $ARCH $LIBC $VARIANT $VERSION
             "
 
           # Calculate and validate build duration
@@ -141,18 +144,26 @@ jobs:
             echo "✅ Build time within limit: ${BUILD_MINUTES}m ${BUILD_SECONDS}s < 30m"
           fi
 
-      - name: Verify static linking
+      - name: Verify linking
         env:
           ARCH: ${{ matrix.arch }}
+          LIBC: ${{ matrix.libc }}
         run: |
-          echo "Checking directory: build/skopeo-$ARCH/install/bin/"
-          ls -la build/skopeo-$ARCH/install/bin/ || {
-            echo "Error: Directory build/skopeo-$ARCH/install/bin/ not found"
+          # Determine install directory based on LIBC variant
+          if [[ "$LIBC" == "glibc" ]]; then
+            INSTALL_DIR="build/skopeo-${ARCH}-glibc/install/bin/"
+          else
+            INSTALL_DIR="build/skopeo-${ARCH}/install/bin/"
+          fi
+
+          echo "Checking directory: $INSTALL_DIR"
+          ls -la "$INSTALL_DIR" || {
+            echo "Error: Directory $INSTALL_DIR not found"
             exit 1
           }
 
           found_binary=false
-          for binary in build/skopeo-$ARCH/install/bin/*; do
+          for binary in "$INSTALL_DIR"/*; do
             # Skip if glob didn't match any files (bash returns the pattern itself)
             if [[ ! -f "$binary" ]]; then
               echo "Skipping non-file: $binary"
@@ -162,29 +173,58 @@ jobs:
             found_binary=true
             echo "Checking: $binary"
             output=$(ldd "$binary" 2>&1 || true)
-            if echo "$output" | grep -q "not a dynamic executable\|statically linked"; then
-              echo "✓ $binary is statically linked"
+
+            if [[ "$LIBC" == "glibc" ]]; then
+              # For glibc variant: allow only glibc dependencies
+              if echo "$output" | grep -q "not a dynamic executable\|statically linked"; then
+                echo "✓ $binary is statically linked (even better than glibc-dynamic)"
+              elif echo "$output" | grep -E "libc\.so\.6|libm\.so\.6|libresolv\.so\.2|libgcc_s\.so\.1|linux-vdso\.so\.1|ld-linux" | grep -v -E "libstdc\+\+|libcap|libglib" >/dev/null; then
+                echo "✓ $binary uses glibc dynamic linking (only glibc dependencies allowed)"
+                # Verify no forbidden libraries
+                if echo "$output" | grep -E "libstdc\+\+\.so|libcap\.so|libglib|libsystemd\.so" >/dev/null; then
+                  echo "✗ $binary has forbidden dynamic dependencies:"
+                  echo "$output"
+                  exit 1
+                fi
+              else
+                echo "✗ $binary linking verification failed:"
+                echo "$output"
+                exit 1
+              fi
             else
-              echo "✗ $binary is NOT statically linked:"
-              echo "$output"
-              exit 1
+              # For static variant: must be fully static
+              if echo "$output" | grep -q "not a dynamic executable\|statically linked"; then
+                echo "✓ $binary is statically linked"
+              else
+                echo "✗ $binary is NOT statically linked:"
+                echo "$output"
+                exit 1
+              fi
             fi
           done
 
           if [[ "$found_binary" == "false" ]]; then
-            echo "Error: No binaries found in build/skopeo-$ARCH/install/bin/"
+            echo "Error: No binaries found in $INSTALL_DIR"
             exit 1
           fi
 
       - name: Validate artifact sizes
         env:
           ARCH: ${{ matrix.arch }}
+          LIBC: ${{ matrix.libc }}
         run: |
           echo "=== Validating artifact sizes ==="
 
+          # Determine install directory based on LIBC variant
+          if [[ "$LIBC" == "glibc" ]]; then
+            INSTALL_DIR="build/skopeo-${ARCH}-glibc/install/bin/"
+          else
+            INSTALL_DIR="build/skopeo-${ARCH}/install/bin/"
+          fi
+
           # NFR-002: Individual binaries < 50MB (52428800 bytes)
           echo "Checking individual binary sizes (must be < 50MB)..."
-          for binary in build/skopeo-$ARCH/install/bin/*; do
+          for binary in "$INSTALL_DIR"/*; do
             if [[ ! -f "$binary" ]]; then
               continue
             fi
@@ -208,9 +248,17 @@ jobs:
       - name: Test skopeo binary
         env:
           ARCH: ${{ matrix.arch }}
+          LIBC: ${{ matrix.libc }}
         run: |
           echo "Testing skopeo binary on native ${{ matrix.arch }} runner..."
-          ./build/skopeo-$ARCH/install/bin/skopeo --version
+
+          # Determine install directory based on LIBC variant
+          if [[ "$LIBC" == "glibc" ]]; then
+            INSTALL_DIR="build/skopeo-${ARCH}-glibc/install/bin/"
+          else
+            INSTALL_DIR="build/skopeo-${ARCH}/install/bin/"
+          fi
+          "$INSTALL_DIR/skopeo" --version
           echo "✓ skopeo binary works correctly"
 
       - name: Set tarball name
@@ -218,19 +266,21 @@ jobs:
         env:
           VARIANT: ${{ matrix.variant }}
           ARCH: ${{ matrix.arch }}
+          LIBC: ${{ matrix.libc }}
+          VERSION: ${{ inputs.version }}
         run: |
-          # default variant uses simple name, others include variant
+          # Tarball naming matches package.sh: {tool}-{version}-linux-{arch}-{libc}[-{variant}].tar.zst
           if [[ "$VARIANT" == "default" ]]; then
-            TARBALL_NAME="skopeo-linux-${ARCH}.tar.zst"
+            TARBALL_NAME="skopeo-${VERSION}-linux-${ARCH}-${LIBC}.tar.zst"
           else
-            TARBALL_NAME="skopeo-${VARIANT}-linux-${ARCH}.tar.zst"
+            TARBALL_NAME="skopeo-${VERSION}-linux-${ARCH}-${LIBC}-${VARIANT}.tar.zst"
           fi
           echo "name=$TARBALL_NAME" >> $GITHUB_OUTPUT
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
         with:
-          name: skopeo-${{ matrix.variant }}-${{ matrix.arch }}
+          name: skopeo-${{ matrix.libc }}-${{ matrix.variant }}-${{ matrix.arch }}
           path: |
             build/${{ steps.tarball.outputs.name }}
           retention-days: 7
@@ -244,15 +294,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Download all artifacts
+      - name: Download skopeo artifacts
         uses: actions/download-artifact@v6
         with:
+          pattern: skopeo-*
           path: artifacts/
 
       - name: Consolidate artifacts
         run: |
           mkdir -p release/
-          find artifacts/ -type f -name "*.tar.zst" -exec cp {} release/ \;
+          find artifacts/ -type f -name "skopeo-*.tar.zst" -exec cp {} release/ \;
           ls -lh release/
 
       - name: Setup cosign
@@ -272,16 +323,20 @@ jobs:
 
           # Create release notes
           cat > /tmp/release-notes.md <<'NOTES'
-          Static binaries for skopeo built with Clang + musl + mimalloc (containerized build)
+          Static and glibc-dynamic binaries for skopeo built with Clang + mimalloc (containerized build)
 
           **ARCHITECTURES**
             - linux/amd64
             - linux/arm64
 
-          **VARIANTS**
-            - `skopeo-linux-{arch}.tar.zst`: Default variant with registry configs (⭐ RECOMMENDED)
-            - `skopeo-standalone-linux-{arch}.tar.zst`: Binary only
-            - `skopeo-full-linux-{arch}.tar.zst`: Alias for default (skopeo needs no runtime components)
+          **LIBC VARIANTS**
+            - `*-static.tar.zst`: Fully static (musl), zero runtime dependencies (⭐ RECOMMENDED for maximum portability)
+            - `*-glibc.tar.zst`: Hybrid static (glibc-dynamic), requires glibc 2.34+ (Ubuntu 22.04+, Debian 12+, RHEL 9+)
+
+          **PACKAGE VARIANTS**
+            - `skopeo-{version}-linux-{arch}-{libc}.tar.zst`: Default with registry configs (⭐ RECOMMENDED)
+            - `skopeo-{version}-linux-{arch}-{libc}-standalone.tar.zst`: Binary only
+            - `skopeo-{version}-linux-{arch}-{libc}-full.tar.zst`: Alias for default (skopeo needs no runtime components)
 
           **NOTE**: All skopeo variants are essentially the same (~30MB) since skopeo is a registry client tool that doesn't run containers. The default variant includes registry configuration files.
 
@@ -289,9 +344,9 @@ jobs:
 
           **Option A: Standalone variant (single binary)**
           ```bash
-          # Download and extract
-          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/skopeo-${{ inputs.version }}/skopeo-standalone-linux-amd64.tar.zst
-          tar -xf skopeo-standalone-linux-amd64.tar.zst
+          # Download and extract (static variant recommended)
+          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/skopeo-${{ inputs.version }}/skopeo-${{ inputs.version }}-linux-amd64-static-standalone.tar.zst
+          tar -xf skopeo-${{ inputs.version }}-linux-amd64-static-standalone.tar.zst
           cd skopeo-${{ inputs.version }}
 
           # Run directly or copy to your preferred location
@@ -301,11 +356,11 @@ jobs:
 
           **Option B: Default/Full variant (recommended - includes registry configs)**
           ```bash
-          # Download tarball for your architecture
-          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/skopeo-${{ inputs.version }}/skopeo-linux-amd64.tar.zst
+          # Download tarball for your architecture (static variant recommended)
+          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/skopeo-${{ inputs.version }}/skopeo-${{ inputs.version }}-linux-amd64-static.tar.zst
 
           # Extract
-          tar -xf skopeo-linux-amd64.tar.zst
+          tar -xf skopeo-${{ inputs.version }}-linux-amd64-static.tar.zst
           cd skopeo-${{ inputs.version }}
 
           # Install system-wide
@@ -317,6 +372,9 @@ jobs:
           skopeo --version
           ```
 
+          **For glibc variant** (requires glibc 2.34+):
+          Replace `-static.tar.zst` with `-glibc.tar.zst` in the download URL.
+
           **VERIFICATION**
 
           All tarballs include SHA256 checksums and cosign signatures (keyless OIDC).
@@ -326,17 +384,18 @@ jobs:
           sha256sum -c checksums.txt --ignore-missing
           ```
 
-          Verify cosign signature (example):
+          Verify cosign signature (example for default static variant):
           ```bash
+          # Replace VERSION with actual version (e.g., v1.21.0)
           cosign verify-blob \
-            --bundle=skopeo-linux-amd64.tar.zst.bundle \
+            --bundle=skopeo-VERSION-linux-amd64-static.tar.zst.bundle \
             --certificate-identity-regexp='https://github.com/.*' \
             --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
-            skopeo-linux-amd64.tar.zst
+            skopeo-VERSION-linux-amd64-static.tar.zst
           ```
 
           **BUILD DETAILS**
-            - Built inside docker.io/ubuntu:rolling container using podman
+            - Built inside docker.io/ubuntu:latest container using podman
             - Compiler: Clang with musl target + mimalloc allocator
             - Workflow ${{ github.workflow }}
             - Run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

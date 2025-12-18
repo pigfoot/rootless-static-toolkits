@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Build static container tools with clang + musl
-# Usage: ./scripts/build-tool.sh <tool> [arch] [variant]
-# Example: ./scripts/build-tool.sh podman amd64 full
-#          ./scripts/build-tool.sh podman amd64 default
-#          ./scripts/build-tool.sh podman amd64 standalone
-#          ./scripts/build-tool.sh buildah arm64
-#          ./scripts/build-tool.sh skopeo
+# Build container tools with clang + musl/glibc
+# Usage: ./scripts/build-tool.sh <tool> [arch] [variant] [libc]
+# Example: ./scripts/build-tool.sh podman amd64 full static
+#          ./scripts/build-tool.sh podman amd64 default glibc
+#          ./scripts/build-tool.sh podman amd64 standalone static
+#          ./scripts/build-tool.sh buildah arm64 default glibc
+#          ./scripts/build-tool.sh skopeo amd64 default static
 
 set -euo pipefail
 
@@ -16,10 +16,11 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TOOL="${1:-}"
 ARCH="${2:-amd64}"
 VARIANT="${3:-}"
+LIBC="${4:-static}"
 
 if [[ -z "$TOOL" ]]; then
   echo "Error: Tool name required" >&2
-  echo "Usage: $0 <podman|buildah|skopeo> [amd64|arm64] [standalone|default|full]" >&2
+  echo "Usage: $0 <podman|buildah|skopeo> [amd64|arm64] [standalone|default|full] [static|glibc]" >&2
   exit 1
 fi
 
@@ -61,6 +62,17 @@ case "$VARIANT" in
     ;;
 esac
 
+# Validate libc
+case "$LIBC" in
+  static|glibc)
+    ;;
+  *)
+    echo "Error: Unsupported libc: $LIBC" >&2
+    echo "Supported: static (musl), glibc (dynamic glibc)" >&2
+    exit 1
+    ;;
+esac
+
 # Map architecture to Go arch
 case "$ARCH" in
   amd64)
@@ -74,7 +86,8 @@ esac
 echo "========================================"
 echo "Building: $TOOL"
 echo "Architecture: $ARCH (native build)"
-[[ -n "$VARIANT" ]] && echo "Variant: $VARIANT"
+echo "Libc variant: $LIBC"
+[[ -n "$VARIANT" ]] && echo "Package variant: $VARIANT"
 echo "========================================"
 
 # Check dependencies
@@ -126,8 +139,12 @@ if [[ "$VARIANT" == "full" ]]; then
   fi
 fi
 
-# Setup build directories
-BUILD_DIR="$PROJECT_ROOT/build/$TOOL-$ARCH"
+# Setup build directories with libc variant suffix
+if [[ "$LIBC" == "glibc" ]]; then
+  BUILD_DIR="$PROJECT_ROOT/build/$TOOL-$ARCH-glibc"
+else
+  BUILD_DIR="$PROJECT_ROOT/build/$TOOL-$ARCH"
+fi
 INSTALL_DIR="$BUILD_DIR/install"
 SRC_DIR="$BUILD_DIR/src"
 
@@ -140,7 +157,7 @@ LDFLAGS="${LDFLAGS:-}"
 UPSTREAM_REPO="containers/$TOOL"
 
 # Get version (from env or fetch latest)
-if [[ -z "${VERSION:-}" ]]; then
+if [[ -z "${VERSION:-}" || "${VERSION}" == "latest" ]]; then
   echo "Fetching latest $TOOL version from GitHub API..."
   # Use GitHub API with authentication if available to avoid rate limiting
   if [[ -n "${GITHUB_TOKEN:-}" ]]; then
@@ -227,6 +244,9 @@ else
 fi
 
 # Build mimalloc for this architecture if not already built
+# Note: For glibc builds, we can reuse the same mimalloc as static builds since
+# mimalloc itself is always statically linked. The LIBC parameter only affects
+# whether mimalloc's *own* dependencies use -static flag during its build.
 MIMALLOC_INSTALL="$PROJECT_ROOT/build/mimalloc/build-$ARCH/install"
 if [[ -f "$MIMALLOC_INSTALL/lib/libmimalloc.a" ]]; then
   MIMALLOC_DIR="$MIMALLOC_INSTALL"
@@ -235,8 +255,8 @@ elif [[ -f "$MIMALLOC_INSTALL/lib64/libmimalloc.a" ]]; then
   MIMALLOC_DIR="$MIMALLOC_INSTALL"
   MIMALLOC_LIB_DIR="$MIMALLOC_DIR/lib64"
 else
-  echo "Building mimalloc for $ARCH..."
-  "$SCRIPT_DIR/build-mimalloc.sh" "$ARCH"
+  echo "Building mimalloc for $ARCH with libc=$LIBC..."
+  "$SCRIPT_DIR/build-mimalloc.sh" "$ARCH" "$LIBC"
   # Re-check after building
   if [[ -f "$MIMALLOC_INSTALL/lib64/libmimalloc.a" ]]; then
     MIMALLOC_DIR="$MIMALLOC_INSTALL"
@@ -247,7 +267,7 @@ else
   fi
 fi
 
-# Setup clang + musl native build environment
+# Setup compiler environment based on libc variant
 export CC="clang"
 export CXX="clang++"
 export AR="ar"
@@ -258,19 +278,33 @@ export CGO_ENABLED=1
 export GOOS=linux
 export GOARCH="$GOARCH"
 
-# Point clang to use musl instead of glibc (architecture-aware)
-# CRITICAL: Prevents SIGFPE errors during podman build (glibc NSS incompatibility)
-if [[ "$ARCH" == "amd64" ]]; then
-    MUSL_ARCH="x86_64-linux-musl"
-elif [[ "$ARCH" == "arm64" ]]; then
-    MUSL_ARCH="aarch64-linux-musl"
-fi
+if [[ "$LIBC" == "static" ]]; then
+  # Static build with musl libc
+  echo "Configuring for static musl build..."
 
-# Combine musl and mimalloc flags
-# -w disables warnings to avoid musl header issues
-export CGO_CFLAGS="-I/usr/include/${MUSL_ARCH} -I$MIMALLOC_DIR/include -w"
-export CGO_LDFLAGS="-L/usr/lib/${MUSL_ARCH} -static"
-# NOTE: mimalloc linking moved to -extldflags to avoid duplication
+  # Point clang to use musl instead of glibc (architecture-aware)
+  # CRITICAL: Prevents SIGFPE errors during podman build (glibc NSS incompatibility)
+  if [[ "$ARCH" == "amd64" ]]; then
+      MUSL_ARCH="x86_64-linux-musl"
+  elif [[ "$ARCH" == "arm64" ]]; then
+      MUSL_ARCH="aarch64-linux-musl"
+  fi
+
+  # Combine musl and mimalloc flags
+  # -w disables warnings to avoid musl header issues
+  export CGO_CFLAGS="-I/usr/include/${MUSL_ARCH} -I$MIMALLOC_DIR/include -w"
+  export CGO_LDFLAGS="-L/usr/lib/${MUSL_ARCH} -static"
+  # NOTE: mimalloc linking moved to -extldflags to avoid duplication
+
+else
+  # Dynamic glibc build
+  echo "Configuring for glibc dynamic build..."
+
+  # Use default system glibc (no special target needed for clang)
+  export CGO_CFLAGS="-I$MIMALLOC_DIR/include -w"
+  export CGO_LDFLAGS=""
+  # NOTE: mimalloc and other libs linked via -extldflags
+fi
 
 # Build libseccomp from source (required for podman and buildah)
 # Reason: podman and buildah use github.com/seccomp/libseccomp-golang bindings
@@ -381,10 +415,18 @@ BUILD_TAGS="containers_image_openpgp exclude_graphdriver_btrfs exclude_graphdriv
 echo "========================================"
 echo "Building $TOOL binary..."
 echo "========================================"
-# Use --whole-archive in extldflags to force mimalloc's malloc to override musl malloc
-# This ensures mimalloc is only linked once (not repeated for each CGO package)
-# Build extldflags with expanded variables
-EXTLDFLAGS="-static -L${MIMALLOC_LIB_DIR} -Wl,--whole-archive -l:libmimalloc.a -Wl,--no-whole-archive -lpthread"
+
+# Configure extldflags based on libc variant
+if [[ "$LIBC" == "static" ]]; then
+  # Static build: fully static binary with musl
+  # Use --whole-archive to force mimalloc's malloc to override musl malloc
+  EXTLDFLAGS="-static -L${MIMALLOC_LIB_DIR} -Wl,--whole-archive -l:libmimalloc.a -Wl,--no-whole-archive -lpthread"
+else
+  # Glibc dynamic build: only glibc is dynamic, rest is static
+  # Static link libstdc++ and libgcc, dynamic link only glibc
+  # Use -Wl,-Bstatic/-Bdynamic to control linking per-library
+  EXTLDFLAGS="-static-libgcc -static-libstdc++ -L${MIMALLOC_LIB_DIR} -Wl,-Bstatic -Wl,--whole-archive -l:libmimalloc.a -Wl,--no-whole-archive -lpthread -Wl,-Bdynamic"
+fi
 
 echo "Linking with mimalloc from: $MIMALLOC_LIB_DIR"
 echo "EXTLDFLAGS: $EXTLDFLAGS"
@@ -395,13 +437,38 @@ go build \
   -o "$INSTALL_DIR/bin/$TOOL" \
   ./cmd/$TOOL
 
-# Verify binary is static
-echo "Verifying static binary..."
-if ldd "$INSTALL_DIR/bin/$TOOL" 2>&1 | grep -q "not a dynamic executable"; then
-  echo "✓ Binary is truly static"
+# Verify binary linking
+echo "Verifying binary linking..."
+LDD_OUTPUT=$(ldd "$INSTALL_DIR/bin/$TOOL" 2>&1 || true)
+
+if [[ "$LIBC" == "static" ]]; then
+  # Static build should have no dynamic dependencies
+  if echo "$LDD_OUTPUT" | grep -q "not a dynamic executable"; then
+    echo "✓ Binary is truly static (musl)"
+  else
+    echo "⚠ Warning: Binary has unexpected dynamic dependencies:"
+    echo "$LDD_OUTPUT"
+  fi
 else
-  echo "⚠ Warning: Binary may have dynamic dependencies:"
-  ldd "$INSTALL_DIR/bin/$TOOL" || true
+  # Glibc build should only have glibc dependencies
+  echo "Binary dynamic dependencies:"
+  echo "$LDD_OUTPUT"
+
+  # Check that only glibc is dynamically linked
+  if echo "$LDD_OUTPUT" | grep -qE "libc\.so|ld-linux"; then
+    echo "✓ Binary links to glibc dynamically"
+
+    # Verify no other libraries (except linux-vdso.so.1 which is kernel-provided)
+    NON_GLIBC_DEPS=$(echo "$LDD_OUTPUT" | grep -v "linux-vdso" | grep -v "libc\.so" | grep -v "ld-linux" | grep "=>" || true)
+    if [[ -z "$NON_GLIBC_DEPS" ]]; then
+      echo "✓ Only glibc is dynamically linked (as expected)"
+    else
+      echo "⚠ Warning: Unexpected dynamic dependencies found:"
+      echo "$NON_GLIBC_DEPS"
+    fi
+  else
+    echo "⚠ Warning: Expected glibc dependencies not found"
+  fi
 fi
 
 # Note: Verify mimalloc usage at runtime with:
@@ -422,7 +489,7 @@ if [[ "$TOOL" == "podman" ]]; then
   mkdir -p "$INSTALL_DIR/lib/podman"
   mv bin/rootlessport "$INSTALL_DIR/lib/podman/"
 
-  if ldd "$INSTALL_DIR/lib/podman/rootlessport" 2>&1 | grep -q "not a dynamic executable"; then
+  if (ldd "$INSTALL_DIR/lib/podman/rootlessport" 2>&1 || true) | grep -q "not a dynamic executable"; then
     echo "✓ rootlessport is static"
   else
     echo "⚠ Warning: rootlessport may have dynamic dependencies"
@@ -440,7 +507,7 @@ if [[ "$TOOL" == "podman" ]]; then
   mkdir -p "$INSTALL_DIR/libexec/podman"
   mv bin/quadlet "$INSTALL_DIR/libexec/podman/"
 
-  if ldd "$INSTALL_DIR/libexec/podman/quadlet" 2>&1 | grep -q "not a dynamic executable"; then
+  if (ldd "$INSTALL_DIR/libexec/podman/quadlet" 2>&1 || true) | grep -q "not a dynamic executable"; then
     echo "✓ quadlet is static"
   else
     echo "⚠ Warning: quadlet may have dynamic dependencies"
@@ -680,10 +747,29 @@ if [[ "$VARIANT" != "standalone" ]]; then
         # Makefile auto-enables systemd if not using -static flag
         echo "Building conmon (plain Makefile with mimalloc)..."
         make clean 2>/dev/null || true
+
+        # Configure flags based on libc variant
+        if [[ "$LIBC" == "static" ]]; then
+          # Static build with musl
+          CONMON_CFLAGS="-std=c99 -Os -Wall -Wextra -static -I$MIMALLOC_DIR/include"
+          CONMON_LDFLAGS="-s -w -static -L$MIMALLOC_LIB_DIR -Wl,--whole-archive -l:libmimalloc.a -Wl,--no-whole-archive -lpthread"
+          CONMON_LIBS=""  # Not needed for static build, pkg-config handles it
+          CONMON_PKG_CONFIG='pkg-config --static'
+        else
+          # Dynamic glibc build - libs must go in LIBS (after obj files), not LDFLAGS (before obj files)
+          # Also add libseccomp flags manually (Makefile's seccomp detection uses pkg-config)
+          CONMON_CFLAGS="-std=c99 -Os -Wall -Wextra -I$MIMALLOC_DIR/include -I$LIBSECCOMP_INSTALL/include -D USE_SECCOMP=1 $(pkg-config --cflags glib-2.0)"
+          GLIB_STATIC_LIBS=$(pkg-config --static --libs glib-2.0)
+          CONMON_LDFLAGS="-s -w -static-libgcc -static-libstdc++ -L$MIMALLOC_LIB_DIR -L$LIBSECCOMP_INSTALL/lib -Wl,-Bstatic -Wl,--whole-archive -l:libmimalloc.a -Wl,--no-whole-archive -lpthread"
+          CONMON_LIBS="-Wl,-Bstatic $GLIB_STATIC_LIBS -lseccomp -ldl -Wl,-Bdynamic"
+          CONMON_PKG_CONFIG='/bin/false'  # Disable pkg-config (and systemd detection) since we already added libs
+        fi
+
         make git-vars bin/conmon \
-          PKG_CONFIG='pkg-config --static' \
-          CFLAGS="-std=c99 -Os -Wall -Wextra -static -I$MIMALLOC_DIR/include" \
-          LDFLAGS="-s -w -static -L$MIMALLOC_LIB_DIR -Wl,--whole-archive -l:libmimalloc.a -Wl,--no-whole-archive -lpthread" || {
+          PKG_CONFIG="$CONMON_PKG_CONFIG" \
+          CFLAGS="$CONMON_CFLAGS" \
+          LDFLAGS="$CONMON_LDFLAGS" \
+          LIBS="$CONMON_LIBS" || {
             echo "⚠ Warning: Failed to build $component, skipping..."
             continue
           }
@@ -697,8 +783,8 @@ if [[ "$VARIANT" != "standalone" ]]; then
         ;;
 
       netavark)
-        # netavark: Rust native build with musl target for true static linking
-        echo "Building netavark (Rust, static)..."
+        # netavark: Rust build (musl static or glibc dynamic based on LIBC)
+        echo "Building netavark (Rust)..."
         if ! command -v cargo &> /dev/null; then
           echo "⚠ Warning: cargo not found, skipping $component"
           continue
@@ -713,42 +799,51 @@ if [[ "$VARIANT" != "standalone" ]]; then
           continue
         fi
 
-        # Determine musl target based on architecture
-        case "$ARCH" in
-          amd64)
-            MUSL_TARGET="x86_64-unknown-linux-musl"
-            ;;
-          arm64)
-            MUSL_TARGET="aarch64-unknown-linux-musl"
-            ;;
-        esac
+        # Configure target based on libc variant and architecture
+        if [[ "$LIBC" == "static" ]]; then
+          # Static musl build
+          case "$ARCH" in
+            amd64)
+              RUST_TARGET_NAME="x86_64-unknown-linux-musl"
+              ;;
+            arm64)
+              RUST_TARGET_NAME="aarch64-unknown-linux-musl"
+              ;;
+          esac
 
-        # Try musl target first (preferred), fallback to static feature
-        RUST_TARGET=""
-        BUILD_PATH="target/release"
+          # Try to install musl target
+          RUST_TARGET=""
+          BUILD_PATH="target/release"
 
-        if command -v rustup &> /dev/null; then
-          # Check if musl target is available
-          if rustup target list | grep -q "$MUSL_TARGET (installed)"; then
-            RUST_TARGET="--target $MUSL_TARGET"
-            BUILD_PATH="target/$MUSL_TARGET/release"
-            echo "  Using musl target for static linking"
-          else
-            echo "  musl target not installed, trying to add..."
-            rustup target add "$MUSL_TARGET" 2>/dev/null && {
-              RUST_TARGET="--target $MUSL_TARGET"
-              BUILD_PATH="target/$MUSL_TARGET/release"
-              echo "  ✓ Added musl target"
-            }
+          if command -v rustup &> /dev/null; then
+            if rustup target list | grep -q "$RUST_TARGET_NAME (installed)"; then
+              RUST_TARGET="--target $RUST_TARGET_NAME"
+              BUILD_PATH="target/$RUST_TARGET_NAME/release"
+              echo "  Using musl target for static linking"
+            else
+              echo "  musl target not installed, trying to add..."
+              rustup target add "$RUST_TARGET_NAME" 2>/dev/null && {
+                RUST_TARGET="--target $RUST_TARGET_NAME"
+                BUILD_PATH="target/$RUST_TARGET_NAME/release"
+                echo "  ✓ Added musl target"
+              }
+            fi
           fi
-        fi
 
-        # If no musl target, use static feature flag
-        if [[ -z "$RUST_TARGET" ]]; then
-          export RUSTFLAGS='-C target-feature=+crt-static -C link-arg=-s'
-          echo "  Using RUSTFLAGS for static linking"
+          if [[ -z "$RUST_TARGET" ]]; then
+            export RUSTFLAGS='-C target-feature=+crt-static -C link-arg=-s'
+            echo "  Using RUSTFLAGS for static linking"
+          else
+            export RUSTFLAGS='-C link-arg=-s'
+          fi
         else
+          # Dynamic glibc build - use default gnu target
+          # Note: Will dynamically link to glibc AND libgcc_s.so.1 (system libraries)
+          # libgcc_s.so.1 is unavoidable for Rust + glibc (provides unwinding support)
+          RUST_TARGET=""
+          BUILD_PATH="target/release"
           export RUSTFLAGS='-C link-arg=-s'
+          echo "  Using default gnu target for glibc dynamic linking (includes libgcc_s.so.1)"
         fi
 
         cargo build --release $RUST_TARGET || {
@@ -765,49 +860,58 @@ if [[ "$VARIANT" != "standalone" ]]; then
         ;;
 
       aardvark-dns)
-        # aardvark-dns: Rust native build with musl target for true static linking
-        echo "Building aardvark-dns (Rust, static)..."
+        # aardvark-dns: Rust build (musl static or glibc dynamic based on LIBC)
+        echo "Building aardvark-dns (Rust)..."
         if ! command -v cargo &> /dev/null; then
           echo "⚠ Warning: cargo not found, skipping $component"
           continue
         fi
 
-        # Determine musl target based on architecture
-        case "$ARCH" in
-          amd64)
-            MUSL_TARGET="x86_64-unknown-linux-musl"
-            ;;
-          arm64)
-            MUSL_TARGET="aarch64-unknown-linux-musl"
-            ;;
-        esac
+        # Configure target based on libc variant and architecture
+        if [[ "$LIBC" == "static" ]]; then
+          # Static musl build
+          case "$ARCH" in
+            amd64)
+              RUST_TARGET_NAME="x86_64-unknown-linux-musl"
+              ;;
+            arm64)
+              RUST_TARGET_NAME="aarch64-unknown-linux-musl"
+              ;;
+          esac
 
-        # Try musl target first (preferred), fallback to static feature
-        RUST_TARGET=""
-        BUILD_PATH="target/release"
+          # Try to install musl target
+          RUST_TARGET=""
+          BUILD_PATH="target/release"
 
-        if command -v rustup &> /dev/null; then
-          # Check if musl target is available
-          if rustup target list | grep -q "$MUSL_TARGET (installed)"; then
-            RUST_TARGET="--target $MUSL_TARGET"
-            BUILD_PATH="target/$MUSL_TARGET/release"
-            echo "  Using musl target for static linking"
-          else
-            echo "  musl target not installed, trying to add..."
-            rustup target add "$MUSL_TARGET" 2>/dev/null && {
-              RUST_TARGET="--target $MUSL_TARGET"
-              BUILD_PATH="target/$MUSL_TARGET/release"
-              echo "  ✓ Added musl target"
-            }
+          if command -v rustup &> /dev/null; then
+            if rustup target list | grep -q "$RUST_TARGET_NAME (installed)"; then
+              RUST_TARGET="--target $RUST_TARGET_NAME"
+              BUILD_PATH="target/$RUST_TARGET_NAME/release"
+              echo "  Using musl target for static linking"
+            else
+              echo "  musl target not installed, trying to add..."
+              rustup target add "$RUST_TARGET_NAME" 2>/dev/null && {
+                RUST_TARGET="--target $RUST_TARGET_NAME"
+                BUILD_PATH="target/$RUST_TARGET_NAME/release"
+                echo "  ✓ Added musl target"
+              }
+            fi
           fi
-        fi
 
-        # If no musl target, use static feature flag
-        if [[ -z "$RUST_TARGET" ]]; then
-          export RUSTFLAGS='-C target-feature=+crt-static -C link-arg=-s'
-          echo "  Using RUSTFLAGS for static linking"
+          if [[ -z "$RUST_TARGET" ]]; then
+            export RUSTFLAGS='-C target-feature=+crt-static -C link-arg=-s'
+            echo "  Using RUSTFLAGS for static linking"
+          else
+            export RUSTFLAGS='-C link-arg=-s'
+          fi
         else
+          # Dynamic glibc build - use default gnu target
+          # Note: Will dynamically link to glibc AND libgcc_s.so.1 (system libraries)
+          # libgcc_s.so.1 is unavoidable for Rust + glibc (provides unwinding support)
+          RUST_TARGET=""
+          BUILD_PATH="target/release"
           export RUSTFLAGS='-C link-arg=-s'
+          echo "  Using default gnu target for glibc dynamic linking (includes libgcc_s.so.1)"
         fi
 
         cargo build --release $RUST_TARGET || {
@@ -908,14 +1012,24 @@ if [[ "$VARIANT" != "standalone" ]]; then
 
         # Set CPPFLAGS and LDFLAGS to help find headers/libs
         export CPPFLAGS="-I$LIBFUSE_INSTALL/include${CPPFLAGS:+ $CPPFLAGS}"
-        FUSE_LDFLAGS="-L$LIBFUSE_INSTALL/lib64 -L$LIBFUSE_INSTALL/lib -s -w -static"
+
+        # Configure LDFLAGS based on libc variant
+        if [[ "$LIBC" == "static" ]]; then
+          # Static build with musl
+          FUSE_LDFLAGS="-L$LIBFUSE_INSTALL/lib64 -L$LIBFUSE_INSTALL/lib -s -w -static"
+          FUSE_LIBS="-ldl"
+        else
+          # Dynamic glibc build
+          FUSE_LDFLAGS="-L$LIBFUSE_INSTALL/lib64 -L$LIBFUSE_INSTALL/lib -s -w -static-libgcc"
+          FUSE_LIBS="-ldl"
+        fi
 
         sh autogen.sh || {
           echo "⚠ Warning: autogen.sh failed for fuse-overlayfs"
           continue
         }
 
-        LIBS="-ldl" LDFLAGS="$FUSE_LDFLAGS" ./configure --prefix=/usr || {
+        LIBS="$FUSE_LIBS" LDFLAGS="$FUSE_LDFLAGS" ./configure --prefix=/usr || {
           echo "⚠ Warning: configure failed for fuse-overlayfs"
           continue
         }
@@ -955,19 +1069,55 @@ if [[ "$VARIANT" != "standalone" ]]; then
           echo "⚠ Warning: autogen.sh failed for crun"
           continue
         }
-        # Add mimalloc to configure
+
+        # Configure with mimalloc (same for both variants)
         ./configure --disable-systemd --enable-embedded-yajl \
           CFLAGS="-I$MIMALLOC_DIR/include" \
           LDFLAGS="$LDFLAGS -L$MIMALLOC_LIB_DIR -Wl,--whole-archive -l:libmimalloc.a -Wl,--no-whole-archive -lpthread" || {
           echo "⚠ Warning: configure failed for crun"
           continue
         }
+
         make clean 2>/dev/null || true
+
+        # Configure make flags based on libc variant
         # Preserve LDFLAGS from environment (contains -L for libseccomp and mimalloc)
-        make LDFLAGS="$LDFLAGS -static-libgcc -all-static" EXTRA_LDFLAGS='-s -w' -j$(nproc) || {
-          echo "⚠ Warning: make failed for crun"
-          continue
-        }
+        if [[ "$LIBC" == "static" ]]; then
+          # Static build with musl
+          make LDFLAGS="$LDFLAGS -static-libgcc -all-static" EXTRA_LDFLAGS='-s -w' -j$(nproc) || {
+            echo "⚠ Warning: make failed for crun"
+            continue
+          }
+        else
+          # Dynamic glibc build - use .a file paths to bypass libtool flag filtering
+          # libtool rewrites -l flags but cannot modify file paths (proven solution)
+          echo "  Finding static libraries for selective linking..."
+
+          # Find libcap.a (system library)
+          LIBCAP_A=$(find /usr/lib* -name "libcap.a" 2>/dev/null | head -1)
+          if [[ -z "$LIBCAP_A" ]]; then
+            echo "⚠ Warning: libcap.a not found, crun may have dynamic libcap"
+          else
+            echo "  Found libcap.a: $LIBCAP_A"
+          fi
+
+          # libseccomp.a (custom built)
+          LIBSECCOMP_A="$LIBSECCOMP_INSTALL/lib/libseccomp.a"
+          if [[ ! -f "$LIBSECCOMP_A" ]]; then
+            echo "⚠ Warning: libseccomp.a not found at $LIBSECCOMP_A"
+          else
+            echo "  Found libseccomp.a: $LIBSECCOMP_A"
+          fi
+
+          # Override FOUND_LIBS with .a paths (libtool cannot filter file paths)
+          # Keep -lm dynamic (glibc math library)
+          CRUN_STATIC_LIBS="$LIBCAP_A $LIBSECCOMP_A"
+
+          make FOUND_LIBS="$CRUN_STATIC_LIBS -lm" LDFLAGS="$LDFLAGS -static-libgcc -static-libstdc++" EXTRA_LDFLAGS='-s -w' -j$(nproc) || {
+            echo "⚠ Warning: make failed for crun"
+            continue
+          }
+        fi
         make install || {
           echo "⚠ Warning: make install failed for crun"
           continue
@@ -990,10 +1140,21 @@ if [[ "$VARIANT" != "standalone" ]]; then
           echo "⚠ Warning: autogen.sh failed for catatonit"
           continue
         }
-        ./configure LDFLAGS="-static" --prefix=/ --bindir=/bin || {
+
+        # Configure LDFLAGS based on libc variant
+        if [[ "$LIBC" == "static" ]]; then
+          # Static build with musl
+          CATATONIT_LDFLAGS="-static"
+        else
+          # Dynamic glibc build
+          CATATONIT_LDFLAGS="-static-libgcc"
+        fi
+
+        ./configure LDFLAGS="$CATATONIT_LDFLAGS" --prefix=/ --bindir=/bin || {
           echo "⚠ Warning: configure failed for catatonit"
           continue
         }
+
         make clean 2>/dev/null || true
         make -j$(nproc) || {
           echo "⚠ Warning: make failed for catatonit"
@@ -1009,19 +1170,32 @@ if [[ "$VARIANT" != "standalone" ]]; then
         ;;
 
       pasta)
-        # pasta: custom Makefile (already correct!)
-        # make static produces both pasta and pasta.avx2 (if AVX2 available)
-        echo "Building pasta (make static)..."
+        # pasta: custom Makefile - supports both static and dynamic builds
+        echo "Building pasta..."
         make clean 2>/dev/null || true
-        make static 2>/dev/null || make -j$(nproc) 2>/dev/null || {
-          echo "⚠ Warning: Build failed for pasta, skipping..."
-          continue
-        }
+
+        # Build based on libc variant
+        if [[ "$LIBC" == "static" ]]; then
+          # Static build - produces both pasta and pasta.avx2 (if AVX2 available)
+          echo "  Using 'make static' for musl static build"
+          make static 2>/dev/null || make -j$(nproc) 2>/dev/null || {
+            echo "⚠ Warning: Build failed for pasta, skipping..."
+            continue
+          }
+        else
+          # Dynamic glibc build - use default make target
+          echo "  Using default 'make' for glibc dynamic build"
+          make -j$(nproc) 2>/dev/null || {
+            echo "⚠ Warning: Build failed for pasta, skipping..."
+            continue
+          }
+        fi
+
         # Copy pasta binary
         if [[ -f "pasta" ]]; then
           cp pasta "$INSTALL_DIR/bin/" && echo "✓ Built pasta"
         fi
-        # Copy pasta.avx2 if it was built
+        # Copy pasta.avx2 if it was built (typically only with static builds)
         if [[ -f "pasta.avx2" ]]; then
           cp pasta.avx2 "$INSTALL_DIR/bin/" && echo "✓ Built pasta.avx2 (AVX2 optimized)"
         fi

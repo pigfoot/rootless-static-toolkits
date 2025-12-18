@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Smoke test for static binaries
-# Usage: ./scripts/test-static.sh <install-dir>
-# Example: ./scripts/test-static.sh build/podman-amd64/install
+# Smoke test for static and glibc binaries
+# Usage: ./scripts/test-static.sh <install-dir> [libc]
+# Example: ./scripts/test-static.sh build/podman-amd64/install static
+#          ./scripts/test-static.sh build/podman-amd64-glibc/install glibc
 
 set -euo pipefail
 
@@ -10,11 +11,13 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Parse arguments
 INSTALL_DIR="${1:-}"
+LIBC="${2:-static}"
 
 if [[ -z "$INSTALL_DIR" ]]; then
   echo "Error: Install directory required" >&2
-  echo "Usage: $0 <install-dir>" >&2
-  echo "Example: $0 build/podman-amd64/install" >&2
+  echo "Usage: $0 <install-dir> [libc]" >&2
+  echo "Example: $0 build/podman-amd64/install static" >&2
+  echo "         $0 build/podman-amd64-glibc/install glibc" >&2
   exit 1
 fi
 
@@ -27,6 +30,7 @@ echo "========================================"
 echo "Running Smoke Tests"
 echo "========================================"
 echo "Install directory: $INSTALL_DIR"
+echo "Libc variant: $LIBC"
 echo ""
 
 # Test results
@@ -53,19 +57,43 @@ test_binary() {
   fi
   echo "✓ Binary is executable"
 
-  # Test 2: Binary is static (no dynamic dependencies)
-  echo "Checking static linking..."
+  # Test 2: Verify linking based on libc variant
+  echo "Checking linking (expecting $LIBC)..."
   LDD_OUTPUT=$(ldd "$BINARY_PATH" 2>&1 || true)
 
-  if echo "$LDD_OUTPUT" | grep -q "not a dynamic executable"; then
-    echo "✓ Binary is truly static (no dynamic dependencies)"
-  elif echo "$LDD_OUTPUT" | grep -q "statically linked"; then
-    echo "✓ Binary is statically linked"
+  if [[ "$LIBC" == "static" ]]; then
+    # Static build should have no dynamic dependencies
+    if echo "$LDD_OUTPUT" | grep -q "not a dynamic executable"; then
+      echo "✓ Binary is truly static (no dynamic dependencies)"
+    elif echo "$LDD_OUTPUT" | grep -q "statically linked"; then
+      echo "✓ Binary is statically linked"
+    else
+      echo "✗ FAIL: Binary has unexpected dynamic dependencies:"
+      echo "$LDD_OUTPUT"
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+      return 1
+    fi
   else
-    echo "✗ FAIL: Binary has dynamic dependencies:"
-    echo "$LDD_OUTPUT"
-    FAIL_COUNT=$((FAIL_COUNT + 1))
-    return 1
+    # Glibc build should only have glibc dependencies
+    if echo "$LDD_OUTPUT" | grep -qE "libc\.so|ld-linux"; then
+      echo "✓ Binary links to glibc dynamically"
+
+      # Verify no other libraries (except linux-vdso.so.1 which is kernel-provided)
+      NON_GLIBC_DEPS=$(echo "$LDD_OUTPUT" | grep -v "linux-vdso" | grep -v "libc\.so" | grep -v "ld-linux" | grep "=>" || true)
+      if [[ -z "$NON_GLIBC_DEPS" ]]; then
+        echo "✓ Only glibc is dynamically linked (as expected)"
+      else
+        echo "✗ FAIL: Unexpected dynamic dependencies found:"
+        echo "$NON_GLIBC_DEPS"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        return 1
+      fi
+    else
+      echo "✗ FAIL: Expected glibc dependencies not found"
+      echo "$LDD_OUTPUT"
+      FAIL_COUNT=$((FAIL_COUNT + 1))
+      return 1
+    fi
   fi
 
   # Test 3: Binary can execute --version (skip if cross-compiled)
